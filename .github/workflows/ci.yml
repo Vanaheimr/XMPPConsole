@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+# A newer push supersedes an in-flight run for the same branch.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    # windows-latest, like Ratatoskr, Hermod and Styx. Here the reason is
+    # inherited twice over rather than our own: a console application is
+    # platform-neutral, but it builds Ratatoskr, and that one builds Hermod,
+    # which pulls in System.Diagnostics.PerformanceCounter, System.IO.Ports and
+    # System.Drawing.Common. Linux would be cheaper and is worth a second matrix
+    # entry - but not before someone has seen it pass.
+    runs-on: windows-latest
+    steps:
+      # Ratatoskr, Hermod and Styx each need three checkouts side by side,
+      # because their .csproj files reach into sibling directories that are not
+      # submodules. This repository is the other case: it pins all three under
+      # libs/, and the relative paths resolve inside that tree - Ratatoskr
+      # reaches for ..\..\Hermod, Hermod for ..\..\Styx, and both find what they
+      # are looking for. One checkout is the whole build.
+      #
+      # It is also the reproducible one. Those three build against each other's
+      # master, so a breaking change over there turns them red without anything
+      # having moved; here nothing changes until a submodule pointer does.
+      #
+      # All three URLs in .gitmodules are HTTPS, and that is what lets a hosted
+      # runner fetch them at all: it has no SSH key, so a single git@github.com:
+      # entry would fail the checkout for that submodule alone.
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # The test project is the root of everything: building it builds the
+      # console, and under that Ratatoskr, Hermod and Styx.
+      - name: Build
+        run: dotnet build XMPPConsole.Tests/XMPPConsole.Tests.csproj --configuration Release
+
+      # Eight tests on one question: does the input line survive an output that
+      # comes unasked? That is the one thing here that can be got wrong
+      # invisibly. The protocol is not checked in this gate - that suite lives
+      # with Ratatoskr and has a gate of its own.
+      #
+      # Expect 8 passed, 0 skipped. Read anything skipped as a question, not as
+      # noise: the number of skipped tests is the only thing that tells a run
+      # which measured something from one which measured nothing.
+      - name: Test
+        timeout-minutes: 15
+        run: dotnet test XMPPConsole.Tests/XMPPConsole.Tests.csproj --configuration Release --no-build --logger "console;verbosity=normal"

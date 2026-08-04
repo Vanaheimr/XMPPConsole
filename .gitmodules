@@ -6,4 +6,4 @@
 	url = https://github.com/Vanaheimr/Styx.git
 [submodule "libs/Ratatoskr"]
 	path = libs/Ratatoskr
-	url = git@github.com:Vanaheimr/Ratatoskr.git
+	url = https://github.com/Vanaheimr/Ratatoskr.git

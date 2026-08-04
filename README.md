@@ -1,5 +1,7 @@
 # XMPPConsole
 
+[![CI](https://github.com/Vanaheimr/XMPPConsole/actions/workflows/ci.yml/badge.svg)](https://github.com/Vanaheimr/XMPPConsole/actions/workflows/ci.yml)
+
 An interactive XMPP client for the command line: it logs in to an XMPP server
 over WebSocket (RFC 7395), authenticates with SCRAM, and then gives you a
 prompt from which you chat, manage your roster, query services and drive
