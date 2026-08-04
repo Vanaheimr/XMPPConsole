@@ -1,0 +1,9 @@
+[submodule "libs/Hermod"]
+	path = libs/Hermod
+	url = https://github.com/Vanaheimr/Hermod.git
+[submodule "libs/Styx"]
+	path = libs/Styx
+	url = https://github.com/Vanaheimr/Styx.git
+[submodule "libs/Ratatoskr"]
+	path = libs/Ratatoskr
+	url = git@github.com:Vanaheimr/Ratatoskr.git

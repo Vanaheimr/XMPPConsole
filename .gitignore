@@ -1,0 +1,27 @@
+*.pidb
+*.VisualState.xml
+*.suo
+*.csproj.user
+bin/
+obj/
+.vs/
+.idea/
+TestResults/
+.DS_Store
+
+
+# ------------------------------------------------------------------------
+# Secrets. Both of these hold something that must not travel with the
+# history, and neither is reliably confined to bin/.
+
+# The debugging profile passes JID, password and endpoint on the command line
+# - a working account in plain text, one 'git add' away from the history. It
+# is a local file by nature: whoever checks the project out brings their own
+# account, not this one.
+**/Properties/launchSettings.json
+
+# The OMEMO store: the secret IdentityKey, every PreKey and every chain key,
+# and unencrypted at that. Whoever reads the file reads the conversations
+# along with it. It is written next to the executable, which today means bin/
+# - but only for as long as nobody publishes anywhere else.
+omemo-*.json
