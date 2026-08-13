@@ -1,0 +1,31 @@
+<Solution>
+  <!--
+    The paths leave the repository, and that is not an accident. Since the
+    submodules came out of libs/, XMPPConsole.csproj reaches sideways for
+    ..\..\Ratatoskr, Ratatoskr for ..\..\Hermod and Hermod for ..\..\Styx, so
+    the only tree in which this builds at all is the four checked out beside
+    each other:
+
+        XMPPConsole/   Ratatoskr/   Hermod/   Styx/
+
+    A solution that stopped at the repository boundary would therefore be a
+    solution that does not open. What is gained by naming the three anyway is
+    what the sibling solutions gain: they build and step through as source
+    rather than as a reference that resolves to somewhere off-screen.
+
+    Their test suites are deliberately not here. Elsewhere in the family -
+    XMPPConformanceTests, TCPEchoTestClient - the dependencies are pinned
+    submodules, so running HermodTests or RatatoskrTests from that solution
+    measures the revision that checkout pins. Here they would be master, and a
+    red run would not say whether the console or something upstream had moved.
+    The protocol's suite lives with Ratatoskr and has a gate of its own; this
+    solution answers for the console.
+  -->
+  <Folder Name="/Dependencies/">
+    <Project Path="../Ratatoskr/Ratatoskr/Ratatoskr.csproj" />
+    <Project Path="../Hermod/Hermod/Hermod.csproj" />
+    <Project Path="../Styx/Styx/Styx.csproj" />
+  </Folder>
+  <Project Path="XMPPConsole/XMPPConsole.csproj" />
+  <Project Path="XMPPConsole.Tests/XMPPConsole.Tests.csproj" />
+</Solution>

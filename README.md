@@ -139,6 +139,11 @@ Build:
 dotnet build XMPPConsole.Tests/XMPPConsole.Tests.csproj
 ```
 
+or open `XMPPConsole.slnx`, which holds the console, its tests and the three
+libraries as source rather than as references pointing off-screen. Three of
+its five paths leave the repository, so it opens in the layout above and
+nowhere else.
+
 Run — with no arguments it asks for JID, password and WebSocket URI
 interactively:
 
