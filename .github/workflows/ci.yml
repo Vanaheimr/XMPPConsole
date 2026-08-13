@@ -5,6 +5,8 @@ on:
     branches: [master]
   pull_request:
     branches: [master]
+  # Manual runs from the Actions tab ("Run workflow").
+  workflow_dispatch:
 
 # A newer push supersedes an in-flight run for the same branch.
 concurrency:
@@ -17,27 +19,57 @@ jobs:
     # inherited twice over rather than our own: a console application is
     # platform-neutral, but it builds Ratatoskr, and that one builds Hermod,
     # which pulls in System.Diagnostics.PerformanceCounter, System.IO.Ports and
-    # System.Drawing.Common. Linux would be cheaper and is worth a second matrix
-    # entry - but not before someone has seen it pass.
+    # System.Drawing.Common. Linux has since been seen to pass in the
+    # XMPPConformanceTests suite, which builds the same chain on Debian 13, so
+    # a second matrix entry here is now a question of cost rather than of doubt.
     runs-on: windows-latest
     steps:
-      # Ratatoskr, Hermod and Styx each need three checkouts side by side,
-      # because their .csproj files reach into sibling directories that are not
-      # submodules. This repository is the other case: it pins all three under
-      # libs/, and the relative paths resolve inside that tree - Ratatoskr
-      # reaches for ..\..\Hermod, Hermod for ..\..\Styx, and both find what they
-      # are looking for. One checkout is the whole build.
+      # Four checkouts side by side. This repository used to be the exception -
+      # it pinned Hermod, Styx and Ratatoskr as submodules under libs/, so one
+      # checkout was the whole build, and that made it the only reproducible
+      # build of the four.
       #
-      # It is also the reproducible one. Those three build against each other's
-      # master, so a breaking change over there turns them red without anything
-      # having moved; here nothing changes until a submodule pointer does.
+      # It was also what kept the console out of every solution that holds the
+      # protocol: its pinned Ratatoskr was a different revision from the one
+      # XMPPConformanceTests pins, so a tree containing both contained two, and
+      # two Ratatoskr.csproj in one solution produce the same assembly twice.
+      # XMPPConsole.csproj now reaches for ..\..\Ratatoskr like everything else,
+      # which is why this needs the layout spelled out here:
       #
-      # All three URLs in .gitmodules are HTTPS, and that is what lets a hosted
-      # runner fetch them at all: it has no SSH key, so a single git@github.com:
-      # entry would fail the checkout for that submodule alone.
+      #   XMPPConsole/   Ratatoskr/   Hermod/   Styx/
+      #
+      # Note what this gives up, because the old comment here was right about
+      # it: nothing is pinned any more. We build against Ratatoskr master, which
+      # builds against Hermod master, which builds against Styx master, so a
+      # breaking change over there turns this red without anything here having
+      # moved. That is the honest signal and the same one the other three carry.
+      # The reproducible build now lives in exactly one place - the
+      # XMPPConformanceTests superproject, which pins all four and holds this
+      # console in its solution.
       - uses: actions/checkout@v7
         with:
-          submodules: recursive
+          path: XMPPConsole
+
+      - uses: actions/checkout@v7
+        with:
+          repository: Vanaheimr/Ratatoskr
+          path: Ratatoskr
+
+      # Hermod carries FontAwesome icon files whose paths exceed MAX_PATH once
+      # nested under the runner's workspace. Without this its checkout fails
+      # with "Filename too long" and leaves the working tree half-populated.
+      - name: Allow long paths
+        run: git config --system core.longpaths true
+
+      - uses: actions/checkout@v7
+        with:
+          repository: Vanaheimr/Hermod
+          path: Hermod
+
+      - uses: actions/checkout@v7
+        with:
+          repository: Vanaheimr/Styx
+          path: Styx
 
       - uses: actions/setup-dotnet@v6
         with:
@@ -46,16 +78,19 @@ jobs:
       # The test project is the root of everything: building it builds the
       # console, and under that Ratatoskr, Hermod and Styx.
       - name: Build
+        working-directory: XMPPConsole
         run: dotnet build XMPPConsole.Tests/XMPPConsole.Tests.csproj --configuration Release
 
       # Eight tests on one question: does the input line survive an output that
       # comes unasked? That is the one thing here that can be got wrong
       # invisibly. The protocol is not checked in this gate - that suite lives
-      # with Ratatoskr and has a gate of its own.
+      # with Ratatoskr, and everything needing a foreign implementation lives in
+      # XMPPConformanceTests. Both have gates of their own.
       #
       # Expect 8 passed, 0 skipped. Read anything skipped as a question, not as
       # noise: the number of skipped tests is the only thing that tells a run
       # which measured something from one which measured nothing.
       - name: Test
         timeout-minutes: 15
+        working-directory: XMPPConsole
         run: dotnet test XMPPConsole.Tests/XMPPConsole.Tests.csproj --configuration Release --no-build --logger "console;verbosity=normal"

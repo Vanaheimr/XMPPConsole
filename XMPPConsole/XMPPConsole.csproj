@@ -20,7 +20,32 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\libs\Ratatoskr\Ratatoskr\Ratatoskr.csproj" />
+    <!--
+      A sibling directory, not a submodule under libs/. This repository used to
+      pin its own Hermod, Styx and Ratatoskr, which made it the one build in
+      the family that could not drift - and the one that could not be built
+      *with* anything. Its Ratatoskr was a different revision from the one
+      XMPPConformanceTests pins, so a tree holding both held two, and no
+      solution could contain the console and the conformance suite at once
+      without two Ratatoskr.csproj producing the same assembly.
+
+      Now it reaches sideways like everything else does: Ratatoskr reaches for
+      ..\..\Hermod, Hermod for ..\..\Styx, and this for ..\..\Ratatoskr. The
+      layout that satisfies all three is the four checked out beside each
+      other:
+
+          XMPPConsole/   Ratatoskr/   Hermod/   Styx/
+
+      and inside XMPPConformanceTests that layout already exists under libs/,
+      where this resolves to the Ratatoskr that repository pins.
+
+      What it costs is named rather than hidden: this project now builds
+      against whatever Ratatoskr sits beside it, so a breaking change over
+      there turns it red without anything here having moved. That is the same
+      bargain Hermod, Styx and Ratatoskr have always made, and the reproducible
+      build lives in the one place that pins all four.
+    -->
+    <ProjectReference Include="..\..\Ratatoskr\Ratatoskr\Ratatoskr.csproj" />
   </ItemGroup>
 
 </Project>
