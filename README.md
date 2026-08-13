@@ -108,30 +108,72 @@ is in [docs/STANDARDS.md](docs/STANDARDS.md).
 
 ## Getting started
 
-The libraries are **sibling checkouts**, not submodules: `XMPPConsole.csproj`
-reaches for `..\..\Ratatoskr`, that one for `..\..\Hermod`, and that one for
-`..\..\Styx`. So all four go beside each other in one directory:
+Ratatoskr, Hermod and Styx are **submodules** under `libs/`, so one clone is
+the whole build:
 
 ```bash
-git clone https://github.com/Vanaheimr/XMPPConsole.git
-git clone https://github.com/Vanaheimr/Ratatoskr.git
-git clone https://github.com/Vanaheimr/Hermod.git
-git clone https://github.com/Vanaheimr/Styx.git
+git clone --recurse-submodules https://github.com/Vanaheimr/XMPPConsole.git
 ```
 
-which gives the layout the relative paths assume:
+If you already cloned without them:
+
+```bash
+git submodule update --init
+```
+
+The submodule URLs are the public `https://github.com/Vanaheimr/…` mirrors, so
+this needs no account and no deploy key. Inside `libs/` the three end up beside
+each other, which is the layout they expect of one another — Ratatoskr reaches
+for `..\..\Hermod`, Hermod for `..\..\Styx`:
 
 ```
-XMPPConsole/   Ratatoskr/   Hermod/   Styx/
+libs/Ratatoskr/   libs/Hermod/   libs/Styx/
 ```
 
-Nothing here pins anything, so this builds against the current master of all
-three — a breaking change over there turns this red without anything here
-having moved. That is the same arrangement Ratatoskr, Hermod and Styx have
-among themselves. If you want a build that cannot drift, take
-[XMPPConformanceTests](https://github.com/Vanaheimr/XMPPConformanceTests)
-instead: it pins all four as submodules, holds this console in its solution,
-and is the one place in the family where a reproducible build lives.
+The revisions are pinned, so a breaking change upstream does not turn this red
+on its own — and equally, does not get noticed here. That question is asked by
+the nightly in
+[XMPPConformanceTests](https://github.com/Vanaheimr/XMPPConformanceTests),
+which builds the same chain at master.
+
+### Two references, one of which is always off
+
+`XMPPConsole.csproj` names Ratatoskr twice, under opposite conditions:
+
+```xml
+<ProjectReference Include="..\libs\Ratatoskr\Ratatoskr\Ratatoskr.csproj"
+                  Condition="Exists('..\libs\Ratatoskr\Ratatoskr\Ratatoskr.csproj')" />
+<ProjectReference Include="..\..\Ratatoskr\Ratatoskr\Ratatoskr.csproj"
+                  Condition="!Exists('..\libs\Ratatoskr\Ratatoskr\Ratatoskr.csproj')" />
+```
+
+`Condition` is allowed on any MSBuild item, and `Exists()` is evaluated while
+the project is being read — before any target runs, so a `ProjectReference`
+that loses its condition is not a reference that fails to resolve, it is one
+that was never in the project. Relative paths inside `Exists()` resolve against
+the directory of the file the condition is written in, not the working
+directory, so this means the same thing wherever `dotnet build` is invoked
+from.
+
+That is not indecision, it is the two trees this project is built in:
+
+| Checkout | `libs/Ratatoskr` | Resolves to |
+|---|---|---|
+| This repository, cloned on its own | present, pinned | `libs/Ratatoskr` — one clone is the whole build |
+| As `libs/XMPPConsole` inside XMPPConformanceTests | empty, that checkout is deliberately **not** recursive | `..\..\Ratatoskr` — which inside its `libs/` is the Ratatoskr *that* repository pins |
+
+So the pin here never competes with the pin there. That matters because
+XMPPConformanceTests holds this console in its solution: if both pins were
+live in one tree, two `Ratatoskr.csproj` would build the same assembly twice.
+Delete the fallback and the conformance suite stops building; delete the
+submodules and a plain clone stops building.
+
+To see which one won, ask MSBuild rather than guessing — this prints the
+evaluated items without building anything:
+
+```bash
+dotnet msbuild XMPPConsole/XMPPConsole.csproj -getItem:ProjectReference
+```
 
 Build:
 
@@ -140,9 +182,7 @@ dotnet build XMPPConsole.Tests/XMPPConsole.Tests.csproj
 ```
 
 or open `XMPPConsole.slnx`, which holds the console, its tests and the three
-libraries as source rather than as references pointing off-screen. Three of
-its five paths leave the repository, so it opens in the layout above and
-nowhere else.
+libraries as source rather than as references pointing off-screen.
 
 Run — with no arguments it asks for JID, password and WebSocket URI
 interactively:
@@ -425,19 +465,19 @@ XMPPConsole.Tests/                       eight tests on one question:
 docs/STANDARDS.md                        catalogue of relevant RFCs and XEPs
 ```
 
-Beside this repository, not inside it:
+Pinned submodules, inside the repository:
 
 ```
-../Ratatoskr/                            XMPP protocol: client, server, XEPs, OMEMO
-../Hermod/                               network stack: TCP/TLS, HTTP, DNS/SRV, WebSockets
-../Styx/                                 data flow / pipeline abstractions
+libs/Ratatoskr/                          XMPP protocol: client, server, XEPs, OMEMO
+libs/Hermod/                             network stack: TCP/TLS, HTTP, DNS/SRV, WebSockets
+libs/Styx/                               data flow / pipeline abstractions
 ```
 
-| Sibling | Repository | Purpose |
+| Submodule | Repository | Purpose |
 |---|---|---|
-| `../Ratatoskr` | [Vanaheimr/Ratatoskr](https://github.com/Vanaheimr/Ratatoskr) | The XMPP protocol — everything this console drives |
-| `../Hermod` | [Vanaheimr/Hermod](https://github.com/Vanaheimr/Hermod) | Network stack Ratatoskr builds on |
-| `../Styx` | [Vanaheimr/Styx](https://github.com/Vanaheimr/Styx) | Data-flow abstractions Hermod builds on |
+| `libs/Ratatoskr` | [Vanaheimr/Ratatoskr](https://github.com/Vanaheimr/Ratatoskr) | The XMPP protocol — everything this console drives |
+| `libs/Hermod` | [Vanaheimr/Hermod](https://github.com/Vanaheimr/Hermod) | Network stack Ratatoskr builds on |
+| `libs/Styx` | [Vanaheimr/Styx](https://github.com/Vanaheimr/Styx) | Data-flow abstractions Hermod builds on |
 
 The dependency chain runs `XMPPConsole → Ratatoskr → Hermod → Styx`; only the
 first reference is declared here, the rest follow.
@@ -459,10 +499,10 @@ and only shows up while somebody is typing. NUnit, in the same versions as the
 other Vanaheimr suites.
 
 The protocol is not checked here. Its suite lives with
-[Ratatoskr](https://github.com/Vanaheimr/Ratatoskr), in the sibling checkout:
+[Ratatoskr](https://github.com/Vanaheimr/Ratatoskr), in the submodule:
 
 ```bash
-dotnet test ../Ratatoskr/RatatoskrTests/RatatoskrTests.csproj
+dotnet test libs/Ratatoskr/RatatoskrTests/RatatoskrTests.csproj
 ```
 
 And everything that needs a foreign implementation — Prosody, ejabberd,

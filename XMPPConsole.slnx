@@ -1,30 +1,23 @@
 <Solution>
   <!--
-    The paths leave the repository, and that is not an accident. Since the
-    submodules came out of libs/, XMPPConsole.csproj reaches sideways for
-    ..\..\Ratatoskr, Ratatoskr for ..\..\Hermod and Hermod for ..\..\Styx, so
-    the only tree in which this builds at all is the four checked out beside
-    each other:
+    Everything here is inside the repository, because everything here is
+    pinned: libs/ holds Styx, Hermod and Ratatoskr as submodules, and a clone
+    that recurses into them is enough to open this and build it.
 
-        XMPPConsole/   Ratatoskr/   Hermod/   Styx/
-
-    A solution that stopped at the repository boundary would therefore be a
-    solution that does not open. What is gained by naming the three anyway is
-    what the sibling solutions gain: they build and step through as source
-    rather than as a reference that resolves to somewhere off-screen.
-
-    Their test suites are deliberately not here. Elsewhere in the family -
-    XMPPConformanceTests, TCPEchoTestClient - the dependencies are pinned
-    submodules, so running HermodTests or RatatoskrTests from that solution
-    measures the revision that checkout pins. Here they would be master, and a
-    red run would not say whether the console or something upstream had moved.
-    The protocol's suite lives with Ratatoskr and has a gate of its own; this
-    solution answers for the console.
+    Their test suites are named too, the way TCPEchoTestClient and
+    XMPPConformanceTests name theirs. Running them from here measures the
+    revisions this repository pins, so a red result says which one - which is
+    only true because they are pinned. The console's own gate stays narrower:
+    the CI builds and runs XMPPConsole.Tests alone, and the protocol's suite
+    answers for the protocol.
   -->
   <Folder Name="/Dependencies/">
-    <Project Path="../Ratatoskr/Ratatoskr/Ratatoskr.csproj" />
-    <Project Path="../Hermod/Hermod/Hermod.csproj" />
-    <Project Path="../Styx/Styx/Styx.csproj" />
+    <Project Path="libs/Hermod/Hermod/Hermod.csproj" />
+    <Project Path="libs/Hermod/HermodTests/HermodTests.csproj" />
+    <Project Path="libs/Ratatoskr/Ratatoskr/Ratatoskr.csproj" />
+    <Project Path="libs/Ratatoskr/RatatoskrTests/RatatoskrTests.csproj" />
+    <Project Path="libs/Styx/Styx/Styx.csproj" />
+    <Project Path="libs/Styx/StyxTests/StyxTests.csproj" />
   </Folder>
   <Project Path="XMPPConsole/XMPPConsole.csproj" />
   <Project Path="XMPPConsole.Tests/XMPPConsole.Tests.csproj" />
