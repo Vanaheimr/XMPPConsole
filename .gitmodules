@@ -23,12 +23,23 @@
 # The layout under libs/ is the same side-by-side one, which is what lets the
 # libraries keep reaching for each other unchanged: Ratatoskr finds Hermod at
 # ..\..\Hermod, Hermod finds Styx at ..\..\Styx.
+#
+# The branch is named on every entry so that `git submodule update --remote`
+# means the same thing in every clone. Without it there is no branch to follow
+# and it takes whatever the clone happens to point at - in XMPPConformanceTests
+# that walked its Ratatoskr *backwards* to a revision from before the rename,
+# because that clone had grown a second remote and a stale local branch. Nothing
+# here is pinned any differently by it: the pins are the gitlinks in the commit,
+# and a plain `git submodule update` still restores exactly those.
 [submodule "libs/Styx"]
 	path = libs/Styx
 	url = https://github.com/Vanaheimr/Styx.git
+	branch = master
 [submodule "libs/Hermod"]
 	path = libs/Hermod
 	url = https://github.com/Vanaheimr/Hermod.git
+	branch = master
 [submodule "libs/Ratatoskr"]
 	path = libs/Ratatoskr
 	url = https://github.com/Vanaheimr/Ratatoskr.git
+	branch = master
