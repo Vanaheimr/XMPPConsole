@@ -25,12 +25,17 @@
 # ..\..\Hermod, Hermod finds Styx at ..\..\Styx.
 #
 # The branch is named on every entry so that `git submodule update --remote`
-# means the same thing in every clone. Without it there is no branch to follow
-# and it takes whatever the clone happens to point at - in XMPPConformanceTests
-# that walked its Ratatoskr *backwards* to a revision from before the rename,
-# because that clone had grown a second remote and a stale local branch. Nothing
-# here is pinned any differently by it: the pins are the gitlinks in the commit,
-# and a plain `git submodule update` still restores exactly those.
+# means the same thing in every clone. Without it, --remote follows the default
+# branch of the far side as recorded in refs/remotes/origin/HEAD - and that is a
+# local note taken once at clone time, not a question asked of the far side. In
+# XMPPConformanceTests it still pointed at origin/main, a branch GitHub has not
+# had for a long time, and --remote walked that Ratatoskr *backwards* to a
+# revision from around the rename. These three clones are two days old and point
+# at master, so --remote does the right thing today - by youth rather than by
+# instruction, and a clone only gets older.
+#
+# Nothing here is pinned any differently by it: the pins are the gitlinks in the
+# commit, and a plain `git submodule update` still restores exactly those.
 [submodule "libs/Styx"]
 	path = libs/Styx
 	url = https://github.com/Vanaheimr/Styx.git
