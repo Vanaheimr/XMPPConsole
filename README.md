@@ -77,8 +77,8 @@ from this console:
 
 | Area | State |
 |---|---|
-| Transport | WebSocket over TLS (RFC 7395), `wss://`. No TCP, no BOSH |
-| Authentication | SCRAM-SHA-256 preferred, SCRAM-SHA-1 as fallback, SASL PLAIN as the last resort. No channel binding (`-PLUS`) |
+| Transport | WebSocket over TLS (RFC 7395), `wss://`. A `ws://` endpoint is refused unless `--insecure` is given. No TCP, no BOSH |
+| Authentication | SCRAM-SHA-256, and demanded by default — SCRAM-SHA-1 and SASL PLAIN only for whoever lowers the bar with `--sasl`. No channel binding (`-PLUS`) |
 | Endpoint discovery | XEP-0156 `host-meta` over HTTPS; only `wss://` endpoints are taken |
 | JID handling | RFC 7622 (PRECIS, IDNA2008) |
 | XEP-0030 / XEP-0115 / XEP-0128 | Service discovery, entity capabilities, disco extensions |
@@ -209,7 +209,9 @@ The built executable is `XMPPConsole` and takes the same options:
 |---|---|
 | `-j`, `--jid <jid>` | JID in the form `user@domain` |
 | `-p`, `--password <pw>` | Password |
-| `-w`, `--ws`, `--websocket <uri>` | WebSocket endpoint, e.g. `wss://xmpp.example.com:5281/xmpp-websocket` |
+| `-w`, `--ws`, `--websocket <uri>` | WebSocket endpoint, e.g. `wss://xmpp.example.com:5281/xmpp-websocket`. `wss://` only, see [below](#why-ws-is-refused) |
+| `--insecure` | Allow a `ws://` endpoint anyway |
+| `--sasl <mechanism>` | The weakest SASL mechanism still accepted. Default `SCRAM-SHA-256` |
 | `-v`, `--verbose` | Verbose logging (trace level — shows every stanza) |
 | `--chatlogs <dir>` | Keep the conversations as text, see [below](#chat-logs) |
 | `--storeChatMedia` | Fetch the files that were shared. Needs `--chatlogs` |
@@ -473,6 +475,35 @@ a far side that accepts the connection and then keeps quiet. After the
 connection is up, a break is answered with automatic reconnection: exponential
 backoff from 1 second up to 30, at most 5 attempts. The resource is
 `console-<pid>` unless the server is left to choose.
+
+### Why `ws://` is refused
+
+An endpoint given with `-w` has to be `wss://`. Not warned about — refused, and
+the program stops before it asks for a password.
+
+The damage is not the one the word "unencrypted" suggests. It is not that
+somebody reads along; it is that the password itself goes out. The list of SASL
+mechanisms comes from the server and nothing signs it, so whoever sits on the
+way rewrites it: the SCRAM entries disappear, `PLAIN` stays, and `PLAIN` is not
+a proof that you know the password, it is the password. The pinning in
+Ratatoskr would notice the downgrade — from the *second* login onwards. The
+first one is the one being taken, and a first one can be arranged by cutting the
+connection, since this client rebuilds by itself.
+
+Hence two settings that work from the very first frame:
+
+| Setting | Default | What it is for |
+|---|---|---|
+| `--insecure` | off | Permits `ws://`. For a server on the same machine, or a test setup with no certificate. Permits nothing else — an `http://` address stays refused, because that objection is a different one |
+| `--sasl <mechanism>` | `SCRAM-SHA-256` | The weakest mechanism still accepted. Everything this console is pointed at offers it: Prosody, ejabberd, and the `XMPPServer` in Ratatoskr |
+
+A server that really cannot do SCRAM-SHA-256 is told apart from an attack by
+nothing this program can see. So it is refused, and the refusal names the
+option: `--sasl SCRAM-SHA-1`, or `--sasl PLAIN`, which demands nothing at all.
+
+The endpoint discovery above needs neither setting. XEP-0156 takes only `wss://`
+out of a host-meta, and the fallback names it itself — a plain endpoint can only
+ever come from the command line or the prompt.
 
 ## Keepalive
 

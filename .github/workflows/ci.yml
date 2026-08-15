@@ -90,7 +90,7 @@ jobs:
       # decrypting an aesgcm:// URL is checked there too, since D107 moved it
       # where it belongs; what stays here is only whether to fetch at all.
       #
-      # Expect 21 passed, 0 skipped. Read anything skipped as a question, not
+      # Expect 29 passed, 0 skipped. Read anything skipped as a question, not
       # as noise: the number of skipped tests is the only thing that tells a
       # run which measured something from one which measured nothing.
       - name: Test

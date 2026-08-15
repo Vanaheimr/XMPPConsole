@@ -76,7 +76,7 @@ class Program
         if (options is null)
             return;
 
-        var (jid, password, wsUri, verbose, chatLogs, storeChatMedia) = options.Value;
+        var (jid, password, wsUri, verbose, chatLogs, storeChatMedia, _, sasl) = options.Value;
 
         if (string.IsNullOrEmpty(jid) || string.IsNullOrEmpty(password))
         {
@@ -128,6 +128,14 @@ class Program
         try
         {
             _client = new XMPPClient(jid, password, wsUri, loggerFactory);
+
+            // Before ConnectAsync, and that is not a detail of order: the bound
+            // is examined before the first <auth/> leaves the house, because
+            // with PLAIN the password already stands in that frame. A name this
+            // ranking does not know throws here - deliberately, since a typo
+            // would otherwise demand nothing at all, which is exactly what
+            // whoever wrote it wanted to rule out.
+            _client.Connection.MinimumSaslMechanism = sasl;
 
             WireUpUserInterface(_client);
 
@@ -334,7 +342,8 @@ class Program
     #region Command line parsing
 
     private static (string jid, string password, string? wsUri, bool verbose,
-                    string? chatLogs, bool storeChatMedia)? ParseArguments(string[] args)
+                    string? chatLogs, bool storeChatMedia, bool insecure,
+                    string sasl)? ParseArguments(string[] args)
     {
 
         string? jid = null;
@@ -343,6 +352,21 @@ class Program
         var verbose = false;
         string? chatLogs = null;
         var storeChatMedia = false;
+        var insecure = false;
+
+        // The lower bound this console demands of the SASL announcement. Set,
+        // not left open: without it the very first login follows whatever the
+        // server offers, and the announcement is the one part of the handshake
+        // nobody signs. The pinning in Ratatoskr closes every login after the
+        // first - this closes the first.
+        //
+        // SCRAM-SHA-256 and not SCRAM-SHA-1, because everything this console is
+        // pointed at offers it: Prosody, ejabberd, and the XMPPServer that comes
+        // with Ratatoskr, whose default announcement is exactly these three
+        // names. A server that cannot is told apart from an attack by nothing
+        // this program can see, so it is refused - with a message that names
+        // --sasl, which is how somebody who knows their server says so.
+        var sasl = "SCRAM-SHA-256";
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -377,6 +401,12 @@ class Program
                     break;
                 case "--storeChatMedia" or "--storechatmedia":
                     storeChatMedia = true;
+                    break;
+                case "--insecure":
+                    insecure = true;
+                    break;
+                case "--sasl" when inlineValue is not null || i + 1 < args.Length:
+                    sasl = inlineValue ?? args[++i];
                     break;
                 case "-v" or "--verbose":
                     verbose = true;
@@ -418,7 +448,23 @@ class Program
                 wsUri = input;
         }
 
-        return (jid, password, wsUri, verbose, chatLogs, storeChatMedia);
+        // Behind the prompt and not at -w, because both roads end here. An
+        // address typed in by hand is no safer than one on the command line,
+        // and the one that gets typed is the one somebody is improvising.
+        if (EndpointPolicy.Refuse(wsUri, insecure) is string objection)
+        {
+            Console.WriteLine($"Error: {objection}");
+            return null;
+        }
+
+        if (insecure && wsUri is not null &&
+            wsUri.TrimStart().StartsWith("ws://", StringComparison.OrdinalIgnoreCase))
+        {
+            Console.WriteLine("Warning: --insecure - the login travels readable over ws://, and " +
+                              "whoever sits on the way decides which SASL mechanism is on offer.");
+        }
+
+        return (jid, password, wsUri, verbose, chatLogs, storeChatMedia, insecure, sasl);
 
     }
 
@@ -2131,7 +2177,16 @@ Usage: XMPPConsole [options]
 Options:
   -j, --jid <jid>         JID (e.g. user@jabber.org)
   -p, --password <pw>     password
-  -w, --websocket <uri>   WebSocket URI (e.g. wss://jabber.org:5443/ws)
+  -w, --websocket <uri>   WebSocket URI (e.g. wss://jabber.org:5443/ws).
+                          wss:// only - over ws:// the login travels readable
+                          and a man in the middle can talk the handshake down
+                          to SASL PLAIN, which is the password itself.
+      --insecure          allow a ws:// endpoint anyway, for a server on the
+                          same machine or a test setup without a certificate
+      --sasl <mechanism>  the weakest SASL mechanism still accepted; default
+                          SCRAM-SHA-256. Lower it only for a server that
+                          cannot: --sasl SCRAM-SHA-1, or --sasl PLAIN, which
+                          demands nothing.
   -v, --verbose           verbose logging (trace level)
       --chatlogs <dir>    keep the conversations as text under
                           <dir>/<jid>/<jid>_yyyyMM.log, presence included
