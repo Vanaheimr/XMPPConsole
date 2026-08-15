@@ -20,6 +20,7 @@
 using Microsoft.Extensions.Logging;
 
 using org.GraphDefined.Vanaheimr.Ratatoskr;
+using org.GraphDefined.Vanaheimr.XMPPConsole.ChatLogs;
 using org.GraphDefined.Vanaheimr.XMPPConsole.ConsoleUI;
 
 #endregion
@@ -49,6 +50,18 @@ class Program
     private static bool _showRawXml;
     private static volatile bool _running = true;
 
+    /// <summary>
+    /// Writes the conversations to disk, or null when --chatlogs was not
+    /// given. Null is the normal case and every call site checks it.
+    /// </summary>
+    private static ChatLogWriter? _chatLog;
+
+    /// <summary>
+    /// Fetches shared files, or null unless --storeChatMedia was given as
+    /// well. Without it a link is recorded in the log and left alone.
+    /// </summary>
+    private static MediaStore? _mediaStore;
+
     #endregion
 
     static async Task Main(string[] args)
@@ -63,7 +76,7 @@ class Program
         if (options is null)
             return;
 
-        var (jid, password, wsUri, verbose) = options.Value;
+        var (jid, password, wsUri, verbose, chatLogs, storeChatMedia) = options.Value;
 
         if (string.IsNullOrEmpty(jid) || string.IsNullOrEmpty(password))
         {
@@ -76,6 +89,23 @@ class Program
         // half-typed input line and leave the user without a prompt (see
         // ConsoleOutput).
         _output = new ConsoleOutput(BuildPrompt);
+
+        // The chat log is set up before the connection, so that the first
+        // presence arriving during login already has somewhere to go.
+        if (!string.IsNullOrWhiteSpace(chatLogs))
+        {
+
+            _chatLog = new ChatLogWriter(chatLogs, WriteWarning);
+
+            if (storeChatMedia)
+                _mediaStore = new MediaStore(chatLogs);
+
+            WriteSystemMessage($"📓 Chat log: {_chatLog.Root}" +
+                               (storeChatMedia
+                                    ? "  (files are fetched into <jid>/media/)"
+                                    : "  (files are noted, not fetched - see --storeChatMedia)"));
+
+        }
 
         using var loggerFactory = Microsoft.Extensions.Logging.LoggerFactory.Create(builder =>
         {
@@ -145,6 +175,7 @@ class Program
 
         client.OnStateChanged += (oldState, newState) =>
         {
+
             switch (newState)
             {
                 case ConnectionState.Reconnecting:
@@ -157,6 +188,12 @@ class Program
                     WriteWarning("❌ Reconnect failed");
                     break;
             }
+
+            // Every change, not only the three worth a line on screen. A gap in
+            // a chat log is a question later - was nothing said, or was nobody
+            // connected? - and this is the only place that answers it.
+            _chatLog?.System(DateTime.Now, $"connection: {oldState} -> {newState}");
+
         };
 
         client.OnCapsDiscovered += (from, info) =>
@@ -165,41 +202,181 @@ class Program
                 WriteSystemMessage($"[Caps] {from}: {string.Join(", ", info.Identities)}");
         };
 
-        client.OnRosterItemAdded   += item => WriteSystemMessage($"Contact added: {item.DisplayName}");
-        client.OnRosterItemRemoved += jid  => WriteSystemMessage($"Contact removed: {jid}");
+        // These carry a JID, so they go to that conversation rather than to the
+        // session log: whoever reads one contact's file wants to see there that
+        // the contact was added, asked to be, or went away.
+        client.OnRosterItemAdded += item =>
+        {
+            WriteSystemMessage($"Contact added: {item.DisplayName}");
+            _chatLog?.System(DateTime.Now, $"contact added: {item.DisplayName}", JidUtilities.Bare(item.Jid));
+        };
+
+        client.OnRosterItemRemoved += jid =>
+        {
+            WriteSystemMessage($"Contact removed: {jid}");
+            _chatLog?.System(DateTime.Now, "contact removed", JidUtilities.Bare(jid));
+        };
 
         client.OnSubscriptionRequest += (from, status) =>
         {
             WriteSystemMessage($"📩 Contact request from {from}: {status}");
             WriteSystemMessage($"   Use /accept {from} or /deny {from}");
+            _chatLog?.System(DateTime.Now, $"contact request: {status}", JidUtilities.Bare(from));
         };
 
     }
 
     #endregion
 
+    #region The chat log
+
+    /// <summary>
+    /// Writes a message to the chat log and looks at what it links to.
+    /// </summary>
+    /// <param name="PeerJID">
+    /// Always the far end, in both directions: a conversation belongs in one
+    /// file, and a file named after ourselves would hold every conversation at
+    /// once.
+    /// </param>
+    private static void LogMessage(String       PeerJID,
+                                   DateTime     When,
+                                   ChatLogKind  Kind,
+                                   String       Actor,
+                                   String?      Body,
+                                   String?      Note = null)
+    {
+
+        var log = _chatLog;
+
+        if (log is null)
+            return;
+
+        log.Message(PeerJID, When, Kind, Actor, Body, Note);
+
+        LogMediaLinks(PeerJID, Body);
+
+    }
+
+
+    /// <summary>
+    /// Notes every shared file of a message - and fetches it if that was
+    /// asked for.
+    /// </summary>
+    /// <remarks>
+    /// The download runs beside this and not in it. Whoever holds up this
+    /// method holds up the handler that called it, and that one is on the way
+    /// of the incoming stanzas: a slow storage host would otherwise stop the
+    /// conversation while a video is being fetched.
+    ///
+    /// What that costs is the order: two files arriving shortly after one
+    /// another may be recorded in the order they finished, not the order they
+    /// were sent. Each line carries its own time, so nothing is lost - it is
+    /// the reading of the file that has to allow for it.
+    /// </remarks>
+    private static void LogMediaLinks(String PeerJID, String? Body)
+    {
+
+        var log = _chatLog;
+
+        if (log is null)
+            return;
+
+        var links = MediaLinks.Detect(Body);
+
+        if (links.Count == 0)
+            return;
+
+        var store = _mediaStore;
+
+        foreach (var link in links)
+        {
+
+            if (store is null)
+            {
+                log.Media(PeerJID, DateTime.Now, $"not fetched (no --storeChatMedia): {WithoutKey(link)}");
+                continue;
+            }
+
+            var url = link;
+
+            _ = Task.Run(async () => {
+
+                var receivedAt  = DateTime.Now;
+                var outcome     = await store.FetchAsync(PeerJID, url, receivedAt);
+
+                log.Media(PeerJID, DateTime.Now, $"{outcome}  <- {WithoutKey(url)}");
+
+            });
+
+        }
+
+    }
+
+
+    /// <summary>
+    /// The URL as it may be written down.
+    /// </summary>
+    /// <remarks>
+    /// An aesgcm URL carries the key to the file in its fragment (XEP-0454).
+    /// The decrypted file lies in the same directory as this log, so the key
+    /// unlocks nothing that is not already open - but a key that need not be
+    /// written down should not be written down. It also travels further than
+    /// the file: a log is quoted, pasted into a bug report, sent on.
+    /// </remarks>
+    private static String WithoutKey(Uri URL)
+
+        => URL.Scheme.Equals(AesGcmUrl.Scheme, StringComparison.OrdinalIgnoreCase)
+               ? $"{AesGcmUrl.ToHttps(URL)} (aesgcm, key not recorded)"
+               : URL.AbsoluteUri;
+
+    #endregion
+
     #region Command line parsing
 
-    private static (string jid, string password, string? wsUri, bool verbose)? ParseArguments(string[] args)
+    private static (string jid, string password, string? wsUri, bool verbose,
+                    string? chatLogs, bool storeChatMedia)? ParseArguments(string[] args)
     {
 
         string? jid = null;
         string? password = null;
         string? wsUri = null;
         var verbose = false;
+        string? chatLogs = null;
+        var storeChatMedia = false;
 
         for (int i = 0; i < args.Length; i++)
         {
-            switch (args[i])
+
+            // --chatlogs=path as well as --chatlogs path. The first is how it
+            // was asked for, the second is how every other option here works,
+            // and a program that accepts only one of the two is a program one
+            // has to remember something about.
+            var argument = args[i];
+            string? inlineValue = null;
+
+            var equals = argument.IndexOf('=');
+            if (equals > 0 && argument.StartsWith("--"))
             {
-                case "-j" or "--jid" when i + 1 < args.Length:
-                    jid = args[++i];
+                inlineValue = argument[(equals + 1)..];
+                argument    = argument[..equals];
+            }
+
+            switch (argument)
+            {
+                case "-j" or "--jid" when inlineValue is not null || i + 1 < args.Length:
+                    jid = inlineValue ?? args[++i];
                     break;
-                case "-p" or "--password" when i + 1 < args.Length:
-                    password = args[++i];
+                case "-p" or "--password" when inlineValue is not null || i + 1 < args.Length:
+                    password = inlineValue ?? args[++i];
                     break;
-                case "-w" or "--ws" or "--websocket" when i + 1 < args.Length:
-                    wsUri = args[++i];
+                case "-w" or "--ws" or "--websocket" when inlineValue is not null || i + 1 < args.Length:
+                    wsUri = inlineValue ?? args[++i];
+                    break;
+                case "--chatlogs" when inlineValue is not null || i + 1 < args.Length:
+                    chatLogs = inlineValue ?? args[++i];
+                    break;
+                case "--storeChatMedia" or "--storechatmedia":
+                    storeChatMedia = true;
                     break;
                 case "-v" or "--verbose":
                     verbose = true;
@@ -208,6 +385,16 @@ class Program
                     PrintUsage();
                     return null;
             }
+        }
+
+        // Saying where the files should go without saying that chats are kept
+        // at all is not a smaller wish, it is two halves of one that cannot
+        // work. Better to say so than to run and write nothing.
+        if (storeChatMedia && string.IsNullOrWhiteSpace(chatLogs))
+        {
+            Console.WriteLine("Error: --storeChatMedia needs --chatlogs <directory>; " +
+                              "the files are stored beside the conversation they belong to.");
+            return null;
         }
 
         if (string.IsNullOrEmpty(jid))
@@ -231,7 +418,7 @@ class Program
                 wsUri = input;
         }
 
-        return (jid, password, wsUri, verbose);
+        return (jid, password, wsUri, verbose, chatLogs, storeChatMedia);
 
     }
 
@@ -298,7 +485,14 @@ class Program
                 if (messageId == null)
                     Console.WriteLine("No recipient set. Use /msg <jid> <message> or /to <jid>");
                 else
+                {
                     Console.WriteLine($"  → Sent to {GetShortJid(_client.CurrentChatPartner!)}");
+                    LogMessage(JidUtilities.Bare(_client.CurrentChatPartner!),
+                               DateTime.Now,
+                               ChatLogKind.Outgoing,
+                               "me",
+                               input);
+                }
             }
         }
 
@@ -339,6 +533,11 @@ class Program
                 {
                     await client.SendMessageAsync(msgParts[0], msgParts[1]);
                     Console.WriteLine($"  → Sent to {GetShortJid(msgParts[0])}");
+                    LogMessage(JidUtilities.Bare(msgParts[0]),
+                               DateTime.Now,
+                               ChatLogKind.Outgoing,
+                               "me",
+                               msgParts[1]);
                 }
                 break;
 
@@ -1521,6 +1720,38 @@ class Program
 
         Console.WriteLine();
 
+        // The timestamp of the message and not the one of this moment: a
+        // message handed in late belongs in the log where it was said, which is
+        // the whole point of XEP-0203.
+        LogMessage(message.FromBareJid,
+                   message.Timestamp,
+                   ChatLogKind.Incoming,
+                   GetShortJid(message.From),
+                   message.Body,
+                   NoteFor(message));
+
+    }
+
+
+    /// <summary>
+    /// What a message is besides its text - or null when it is nothing else.
+    /// </summary>
+    private static string? NoteFor(XMPPMessage Message)
+    {
+
+        var notes = new List<string>(2);
+
+        if (Message.IsCorrection)
+            notes.Add($"corrects {Message.ReplacesId}");
+
+        if (Message.IsDelayed)
+            notes.Add(Message.DelayedBy is null
+                          ? "handed in late"
+                          : $"handed in late by {Message.DelayedBy}");
+
+        return notes.Count == 0
+                   ? null
+                   : string.Join(", ", notes);
 
     }
 
@@ -1581,6 +1812,16 @@ class Program
 
         Console.ResetColor();
         Console.WriteLine(carbon.Body ?? "(no content)");
+
+        // A carbon is the same conversation seen from another device, so it
+        // belongs in the same file - under the far end, whichever direction it
+        // went.
+        LogMessage(JidUtilities.Bare(carbon.IsSent ? carbon.OriginalTo : carbon.OriginalFrom),
+                   carbon.ReceivedAt,
+                   carbon.IsSent ? ChatLogKind.Outgoing : ChatLogKind.Incoming,
+                   carbon.IsSent ? "me" : GetShortJid(carbon.OriginalFrom),
+                   carbon.Body,
+                   "carbon");
 
     }
 
@@ -1671,11 +1912,25 @@ class Program
     private static void HandlePresence(string from, string type)
     {
 
-        if (_showRawXml) return; // in raw mode this is shown already
-
         // Ignore our own presence
         if (JidUtilities.Bare(from).Equals(_client!.BareJid, StringComparison.OrdinalIgnoreCase))
             return;
+
+        // Written before the display decides anything: /raw suppresses the line
+        // on screen because the stanza is already there in full, but the chat
+        // log is read later and by somebody who has no stream to look at. What
+        // is on screen must not decide what is kept.
+        //
+        // The status text comes from the roster, which the connection has
+        // already updated by the time this runs - the event itself carries only
+        // the type.
+        _chatLog?.Presence(JidUtilities.Bare(from),
+                           DateTime.Now,
+                           GetShortJid(from),
+                           type,
+                           _client.Roster.GetItem(JidUtilities.Bare(from))?.PresenceStatus);
+
+        if (_showRawXml) return; // in raw mode this is shown already
 
         using var scope = Output();
         Console.ForegroundColor = ConsoleColor.DarkGray;
@@ -1878,6 +2133,13 @@ Options:
   -p, --password <pw>     password
   -w, --websocket <uri>   WebSocket URI (e.g. wss://jabber.org:5443/ws)
   -v, --verbose           verbose logging (trace level)
+      --chatlogs <dir>    keep the conversations as text under
+                          <dir>/<jid>/<jid>_yyyyMM.log, presence included
+      --storeChatMedia    fetch shared files into <dir>/<jid>/media/, named
+                          after the moment they arrived. Needs --chatlogs.
+                          Only aesgcm:// links and messages that are nothing
+                          but one https:// URL - that is how a file is handed
+                          over; a link inside a sentence is not.
   -h, --help              show this help
 
 Examples:

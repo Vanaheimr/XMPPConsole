@@ -73,15 +73,26 @@ jobs:
       - name: Build
         run: dotnet build XMPPConsole.Tests/XMPPConsole.Tests.csproj --configuration Release
 
-      # Eight tests on one question: does the input line survive an output that
-      # comes unasked? That is the one thing here that can be got wrong
-      # invisibly. The protocol is not checked in this gate - that suite lives
-      # with Ratatoskr, and everything needing a foreign implementation lives in
-      # XMPPConformanceTests. Both have gates of their own.
+      # Two questions, and both are things that can be got wrong invisibly.
       #
-      # Expect 8 passed, 0 skipped. Read anything skipped as a question, not as
-      # noise: the number of skipped tests is the only thing that tells a run
-      # which measured something from one which measured nothing.
+      # Does the input line survive an output that comes unasked - the console
+      # writes while somebody is typing, and a broken prompt is only ever seen
+      # by the person it happened to.
+      #
+      # And what does a JID become once it is a directory name. The chat log
+      # turns a name a stranger chose into a path and an incoming message into
+      # a download, so the tests are about the cases a stranger picks: a
+      # resource called '..\..\Windows', a link inside a sentence.
+      #
+      # The protocol is not checked in this gate - that suite lives with
+      # Ratatoskr, and everything needing a foreign implementation lives in
+      # XMPPConformanceTests. Both have gates of their own. Reading and
+      # decrypting an aesgcm:// URL is checked there too, since D107 moved it
+      # where it belongs; what stays here is only whether to fetch at all.
+      #
+      # Expect 21 passed, 0 skipped. Read anything skipped as a question, not
+      # as noise: the number of skipped tests is the only thing that tells a
+      # run which measured something from one which measured nothing.
       - name: Test
         timeout-minutes: 15
         run: dotnet test XMPPConsole.Tests/XMPPConsole.Tests.csproj --configuration Release --no-build --logger "console;verbosity=normal"

@@ -211,7 +211,12 @@ The built executable is `XMPPConsole` and takes the same options:
 | `-p`, `--password <pw>` | Password |
 | `-w`, `--ws`, `--websocket <uri>` | WebSocket endpoint, e.g. `wss://xmpp.example.com:5281/xmpp-websocket` |
 | `-v`, `--verbose` | Verbose logging (trace level — shows every stanza) |
+| `--chatlogs <dir>` | Keep the conversations as text, see [below](#chat-logs) |
+| `--storeChatMedia` | Fetch the files that were shared. Needs `--chatlogs` |
 | `-h`, `--help` | Show the help and exit |
+
+Long options take their value either way, `--chatlogs logs` and
+`--chatlogs=logs`.
 
 Anything not given on the command line is asked for at startup. The password
 prompt does not echo. Leaving the WebSocket URI empty starts the endpoint
@@ -228,6 +233,98 @@ dotnet run --project XMPPConsole -- -j user@example.com -p pw \
 # with the full protocol log
 dotnet run --project XMPPConsole -- -j user@example.com -p secret -v
 ```
+
+## Chat logs
+
+`--chatlogs <dir>` writes what was said as text — not the XML that carried it.
+The raw stream is already available live through `/raw`, and it answers a
+different question: whoever opens a chat log a year later wants to read the
+conversation, not the protocol.
+
+```
+<dir>/
+└── ahzf@example.org/
+    ├── ahzf@example.org_202608.log
+    ├── ahzf@example.org_202609.log
+    └── media/                         (only with --storeChatMedia)
+        └── 20260815_134207_photo.jpg
+```
+
+One directory per conversation, one file per month, one line per event:
+
+```
+# XMPPConsole chat log - ahzf@example.org - 2026-08
+# <date time>  <marker>  <who>  <what>
+# markers: '<' received, '>' sent, '*' presence, '#' session, '@' file
+# a line break inside a message is written as \n, a backslash as \\
+2026-08-15 13:42:07  <  ahzf@example.org/iPhone  Hi 4!
+2026-08-15 13:42:11  >  me  Hallo\nzurück
+2026-08-15 13:42:34  *  ahzf@example.org/iPhone  available  (back at four)
+2026-08-15 13:43:02  <  ahzf@example.org/iPhone  Hi 5!  [corrects msg-17]
+```
+
+Both directions land in the file named after the **far end**, carbons from
+your other devices included — a conversation belongs in one place. Presence
+changes are kept with their status text, and so is the session itself
+(connecting, losing the connection, contact requests), because a gap in a log
+is otherwise an unanswerable question later: was nothing said, or was nobody
+connected?
+
+A message may contain line breaks and a log line may not, so they are written
+as `\n` and a backslash as `\\`. That keeps every event greppable as one line
+and stays reversible.
+
+A JID is not a file name — the resource part forbids almost nothing, and
+`eve@example.org/..\..\..\Windows` is a JID anybody may carry. Everything
+outside `A-Z a-z 0-9 @ . - _` therefore becomes `_`, which costs two JIDs
+differing only in a forbidden character their own directory, and saves a class
+of bug in which the answer to "where did the file go" is "anywhere".
+
+### Shared files
+
+`--storeChatMedia` additionally fetches what was shared, into
+`<dir>/<jid>/media/`, named after the moment it arrived — that is the one time
+this side actually knows, since the timestamp inside a message is what the
+sender claims.
+
+**This turns an incoming message into a network request from your machine**,
+so what counts as a shared file is deliberately narrow:
+
+- `aesgcm://` always. That scheme exists for nothing else ([XEP-0454][xep0454]);
+  the URL carries the key. The file is downloaded, decrypted with the key from
+  the URL fragment and stored in the clear — the fragment itself is never
+  written to the log and never sent to the server.
+- `https://` only when the message is nothing but that one URL. That is how a
+  client hands over an upload ([XEP-0363][xep0363]): the body repeats the URL
+  because the receiver may not read the `jabber:x:oob` element beside it. A
+  link inside a sentence is a different act — somebody is pointing at
+  something, not handing it over.
+- `http://` never, and no other scheme.
+
+What is refused is written into the log too, with the reason, so a file that
+never arrived does not simply go missing.
+
+The remaining rules: at most 100 MB per file, five minutes, redirects followed
+by hand and checked at every hop, and no address that belongs to this machine
+or to a private network. One gap is named rather than papered over — the host
+is resolved, checked, and then resolved a second time by the HTTP client, so a
+name that answers differently the second time gets through. Closing that needs
+a socket handler of its own.
+
+Ratatoskr does not read `jabber:x:oob` today, so the detection works on the
+message text. In practice that is the same thing, because XEP-0363 senders put
+the URL in the body as well — but a client that does not would go unnoticed.
+
+Reading the `aesgcm://` URL and decrypting what comes back is **not** done
+here: that is XEP-0454, it is protocol rather than application, and it lives in
+Ratatoskr as `AesGcmUrl` where any client on that library can use it. The
+fetching stays here on purpose — whether an incoming message may cause a
+request at all, and under which limits, is a decision an application has to
+make. A protocol library that downloads on its own hands that decision to
+whoever sent the message.
+
+[xep0363]: https://xmpp.org/extensions/xep-0363.html
+[xep0454]: https://xmpp.org/extensions/xep-0454.html
 
 ## Commands
 
@@ -492,11 +589,23 @@ The namespace of this application is `org.GraphDefined.Vanaheimr.XMPPConsole`
 dotnet test XMPPConsole.Tests/XMPPConsole.Tests.csproj
 ```
 
-Eight tests, and they all ask the same question: does the input line survive an
-output that comes unasked? That is the one thing in this repository that can be
-got wrong invisibly — a log line written past the prompt looks fine in isolation
-and only shows up while somebody is typing. NUnit, in the same versions as the
-other Vanaheimr suites.
+Twenty-one tests on two questions, and both are things that can be got wrong
+invisibly.
+
+Eight ask whether the input line survives an output that comes unasked — a log
+line written past the prompt looks fine in isolation and only shows up while
+somebody is typing, to the one person it happened to.
+
+The other thirteen are about the chat log, and there the invisible part is that
+the input comes from strangers. A JID becomes a directory name, a message
+becomes a download: the tests are accordingly about a resource called
+`..\..\Windows` and about a link inside a sentence. NUnit, in the same versions
+as the other Vanaheimr suites.
+
+Reading and decrypting an `aesgcm://` URL is checked with
+[Ratatoskr](https://github.com/Vanaheimr/Ratatoskr) rather than here — it is
+XEP-0454 and therefore protocol, not console. What this application answers for
+itself, and what is checked here, is whether to fetch at all.
 
 The protocol is not checked here. Its suite lives with
 [Ratatoskr](https://github.com/Vanaheimr/Ratatoskr), in the submodule:

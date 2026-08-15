@@ -25,3 +25,17 @@ TestResults/
 # along with it. It is written next to the executable, which today means bin/
 # - but only for as long as nobody publishes anywhere else.
 omemo-*.json
+
+# The chat logs from --chatlogs, and the files fetched with --storeChatMedia.
+# The directory is chosen on the command line and usually lies outside this
+# tree, so this catches only the obvious case: somebody who passes a relative
+# name and lands inside the checkout. It is the conversations themselves - and
+# with --storeChatMedia every photo anybody sent - so once is enough.
+#
+# Anchored with a leading slash, and that is not tidiness. Written as
+# 'chatlogs/' this pattern matches at every depth, and git on Windows compares
+# without regard to case - so it swallowed XMPPConsole/ChatLogs/, the source
+# directory of the feature, and the whole of it would have quietly stayed out
+# of the commit.
+/chatlogs/
+/chat-logs/

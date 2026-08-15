@@ -10,6 +10,18 @@
 
   <ItemGroup>
     <!--
+      Two helpers of the chat log are checked directly: the escaping that keeps
+      one event on one line, and the trimming of the punctuation a sentence
+      leaves clinging to a URL. Both are decisions rather than plumbing - the
+      first decides whether a log can be read by grep, the second whether a
+      full stop becomes part of an address - and neither belongs in the public
+      surface of a console application just to be testable.
+    -->
+    <InternalsVisibleTo Include="org.GraphDefined.Vanaheimr.XMPPConsole.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
       Only the log of the output any more: the console writes itself and needs
       a logger for that. BouncyCastle stood here as long as OMEMO lay here -
       since D97 it does not any more, and a package nobody uses is a claim
