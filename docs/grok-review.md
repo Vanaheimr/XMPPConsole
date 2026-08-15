@@ -44,7 +44,9 @@ These belong in the report so the list of problems does not make the code look w
 
 ## Critical / high
 
-### 1. IQ replies accepted without a `from` check
+### 1. ✅ IQ replies accepted without a `from` check
+
+*Closed in `efb86e5` for `SendIqAsync`: every pending request carries whom it was addressed to, and an answer naming a sender has to name that one. An answer naming nobody still passes — RFC 6120, section 8.1.2.1 makes the server stamp the real sender onto anything a client sends, so a peer cannot produce one. Two parts of this finding are **not** closed: `DiscoManager` and `PingManager` keep pending maps of their own, and the identifiers stayed countable, because the comparison is the fix and random identifiers only raise the price of guessing.*
 
 `SendIqAsync` remembers only the stanza `id`. `TryCompleteIq` completes the first matching `result` or `error` IQ, **regardless of `from`**.
 
@@ -108,7 +110,9 @@ Ratatoskr’s README already states this. The console does not stop it.
 
 ---
 
-### 4. SCRAM iteration count has no lower or upper bound
+### 4. ✅ SCRAM iteration count has no lower or upper bound
+
+*Closed in `3b758f2`: digits only, and between 4096 and a million. Measured rather than argued — against the old line `i=2147483647` kept the process four minutes and one second inside the derivation. The negative case turned out to be the third door: `int.Parse` accepted `-1` and PBKDF2 then threw an `ArgumentOutOfRangeException` out of the middle of the handshake, so the report's "can fail hard or burn CPU" was the former.*
 
 ```csharp
 // SCRAMAuthenticator.ProcessServerFirstMessage
@@ -247,10 +251,10 @@ _domain    = parts[1];
 
 ## Recommended order of work
 
-1. **`SendIqAsync`:** store the expected `from` (or “own server / no `from`”) and compare it before completing the wait. Use random IDs (`Guid`), not `pep-1`.
+1. ✅ **`SendIqAsync`:** store the expected `from` (or “own server / no `from`”) and compare it before completing the wait. Use random IDs (`Guid`), not `pep-1`.  *(The comparison is in; the identifiers stayed countable.)*
 2. **OMEMO carbons:** spoofing check first, then decrypt. Reject a missing SCE `<from/>` when `expectedFrom` is set. Set `to` on encrypt.
 3. **Transport:** ✅ refuse `ws://`. Follow host-meta redirects only to `https://`. Check the final URI. Bind the `wss://` host to the JID domain or an allow-list.
-4. **SCRAM:** reject `i < 4096`; impose a hard maximum (for example 1_000_000).
+4. ✅ **SCRAM:** reject `i < 4096`; impose a hard maximum (for example 1_000_000).
 5. **DoS:** maximum frame size (for example 1–4 MiB) on both receive paths and in `XmlStreamSplitter`.
 6. **OMEMO store:** file mode `0600`, optional OS-backed encryption. Republish prekeys after use. Rotate the signed prekey.
 7. **Console:** ✅ default `MinimumSaslMechanism = "SCRAM-SHA-256"`. Accept the JID through `JidUtilities.Parse`.
