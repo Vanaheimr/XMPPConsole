@@ -163,6 +163,7 @@ sowie `Deprecated` und `Obsolete`.
 | XEP | Titel | Status | Anmerkung |
 |---|---|---|---|
 | [XEP-0363](https://xmpp.org/extensions/xep-0363.html) | HTTP File Upload | Stable | heutiger Standardweg für Dateien |
+| [XEP-0066](https://xmpp.org/extensions/xep-0066.html) | Out of Band Data | Stable | `jabber:x:oob` begleitet den 0363-Upload und sagt, dass die URL eine Datei ist. Ratatoskr verwirft das Element, deshalb erkennt `--storeChatMedia` geteilte Dateien am Body. Die IQ-Hälfte (`jabber:iq:oob`) ist praktisch tot, aber nicht abgekündigt — anders als XEP-0095/0096 |
 | [XEP-0446](https://xmpp.org/extensions/xep-0446.html) | File Metadata Element | Experimental | |
 | [XEP-0447](https://xmpp.org/extensions/xep-0447.html) | Stateless File Sharing (SFS) | Experimental | |
 | [XEP-0448](https://xmpp.org/extensions/xep-0448.html) | Encryption for Stateless File Sharing | Experimental | |
