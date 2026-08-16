@@ -1,0 +1,153 @@
+name: Nightly
+
+# The counterpart to ci.yml, and the two ask deliberately different questions.
+#
+# The gate builds what the gitlinks pin, which is what a fresh
+# `git clone --recurse-submodules` produces and therefore the right question for
+# "does this repository still work for whoever clones it". It is also the
+# question that cannot go red on its own: a push to Ratatoskr, Hermod or Styx
+# does not touch this repository at all, so the pins keep the gate green through
+# any amount of upstream movement — and they do drift.
+#
+# This workflow moves the three submodules to master before building. Red here
+# and green there means the library underneath changed in a way this console can
+# see, which is a finding rather than a build failure, and it arrives on the day
+# it was made rather than at the next pin bump.
+#
+# Note what it does NOT repeat: the pinned lane. XMPPConformanceTests' nightly
+# runs both, because its pinned lane needs Prosody, ejabberd and python-omemo
+# installed and no gate can provide them. Here the pinned lane needs nothing at
+# all, so ci.yml has already run it on every push, and a second copy would only
+# spend minutes to learn the same thing twice.
+#
+# Two things worth knowing about scheduled workflows: they only ever run on the
+# default branch, and GitHub disables them after 60 days without any repository
+# activity. If this stops reporting, that is the first thing to check.
+on:
+  schedule:
+    # 03:11 UTC. Off the hour on purpose — GitHub's scheduler is busiest then
+    # and delays runs by tens of minutes — and placed inside the chain the
+    # dependency order suggests: Hermod at 02:17, Ratatoskr at 02:43, this at
+    # 03:11, XMPPConformanceTests at 03:41. Nothing enforces that ordering and
+    # a delayed run breaks it, so it is a convenience for reading four red
+    # badges in the morning, not a mechanism.
+    - cron: '11 3 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: nightly-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  against-master:
+    # The same two-leg matrix as ci.yml, and both legs earn their place here for
+    # the same reason they do there: this suite is about what a name a stranger
+    # chose becomes once it is a file name, and that answer is a platform's. A
+    # change upstream that only shows on one of the two is exactly the kind this
+    # lane exists to catch.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            leg: windows-latest
+          - os: ubuntu-latest
+            container: debian:13
+            leg: debian-13-container
+    name: master (${{ matrix.leg }})
+    runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
+    steps:
+
+      # git must be installed BEFORE the checkout: without a git binary,
+      # actions/checkout silently falls back to a REST tarball, which cannot
+      # fetch submodules — and here that would leave nothing to move to master.
+      # The rest is what a bare debian:13 needs before setup-dotnet can install
+      # the SDK. Package names verified on trixie.
+      - name: Install git and the .NET prerequisites (Debian container)
+        if: runner.os == 'Linux'
+        run: apt-get update && apt-get install -y --no-install-recommends ca-certificates curl git libicu76 libssl3t64 libstdc++6 tzdata
+
+      # Hermod's FontAwesome icons exceed MAX_PATH under the runner's workspace
+      # plus libs/Hermod; without this the submodule checkout fails with
+      # "Filename too long" and leaves the working tree half-populated.
+      - name: Allow long paths (Windows)
+        if: runner.os == 'Windows'
+        run: git config --system core.longpaths true
+
+      # `true` rather than `recursive`, as in ci.yml: none of the three carries
+      # submodules of its own, and `true` cannot quietly grow a second copy of
+      # anything if one is added.
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+
+      # The one line that makes this workflow different from the gate.
+      #
+      # `git fetch origin master` and not `git submodule update --remote`:
+      # --remote follows the branch recorded in refs/remotes/origin/HEAD, and
+      # that is a local note taken once at clone time rather than a question
+      # asked of the far side. It has already walked a submodule *backwards*
+      # here once, to a revision from around the master/main rename. Naming the
+      # branch means the same thing in every clone and on every runner.
+      #
+      # safe.directory because in the container the checkout is owned by a
+      # different uid than the one the job runs as, and git refuses to operate
+      # otherwise. Harmless on Windows.
+      #
+      # `shell: bash` so one script serves both legs: the Windows default is
+      # PowerShell, where `>> "$GITHUB_STEP_SUMMARY"` is not redirection to a
+      # file but a parse error.
+      #
+      # The revisions go into the step summary because they are the whole
+      # premise of the run: a red night is only readable next to the three SHAs
+      # it was red against, and the run page keeps those long after the log is
+      # tedious to open.
+      - name: Move the submodules to master
+        shell: bash
+        run: |
+          git config --global --add safe.directory '*'
+          git submodule foreach 'git fetch origin master && git checkout FETCH_HEAD'
+          {
+            echo "### Submodule revisions under test (${{ matrix.leg }})"
+            echo '```'
+            git submodule status
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      # The test project is the root of everything: building it builds the
+      # console, and under that Ratatoskr, Hermod and Styx — at master now.
+      # This is also where most of what this workflow catches will show up. The
+      # console reaches into the library's surface, so a rename over there
+      # arrives as a compile error here, and that is a finding of exactly the
+      # kind the pins were hiding.
+      - name: Build
+        run: dotnet build XMPPConsole.Tests/XMPPConsole.Tests.csproj --configuration Release
+
+      # Expect the same 29 passed, 0 skipped the gate owes. A different number
+      # against master is the point of the workflow, in either direction: fewer
+      # means something stopped being measured.
+      - name: Test
+        timeout-minutes: 15
+        run: >
+          dotnet test XMPPConsole.Tests/XMPPConsole.Tests.csproj --configuration Release --no-build
+          --logger "console;verbosity=normal"
+          --logger "trx;LogFileName=${{ matrix.leg }}.trx"
+          --results-directory artifacts
+
+      # TRX keeps per test what the console log does not: the skip reason, the
+      # error message and the stack trace, and it survives the run ageing out.
+      #
+      # !cancelled() rather than success(): a red night is when these files
+      # matter most, and uploading only on green would throw away the evidence
+      # in exactly that case.
+      - name: Upload test results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-master-${{ matrix.leg }}
+          path: artifacts/*.trx

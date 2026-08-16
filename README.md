@@ -1,6 +1,16 @@
 # XMPPConsole
 
 [![CI](https://github.com/Vanaheimr/XMPPConsole/actions/workflows/ci.yml/badge.svg)](https://github.com/Vanaheimr/XMPPConsole/actions/workflows/ci.yml)
+[![Nightly](https://github.com/Vanaheimr/XMPPConsole/actions/workflows/nightly.yml/badge.svg)](https://github.com/Vanaheimr/XMPPConsole/actions/workflows/nightly.yml)
+
+Two badges, and the difference between them is which library they build
+against. **CI** gates every push on the revisions `libs/` pins — what a fresh
+`git clone --recurse-submodules` produces — on Windows and Debian 13: **29 of
+29, nothing skipped**, on both. **Nightly** runs the same suite on the same two
+platforms with the three submodules moved to master, because a push to
+Ratatoskr does not touch this repository and the pins keep the gate green
+through any amount of movement underneath. Red there and green here means the
+library changed in a way this console can see.
 
 An interactive XMPP client for the command line: it logs in to an XMPP server
 over WebSocket (RFC 7395), authenticates with SCRAM, and then gives you a
@@ -620,18 +630,28 @@ The namespace of this application is `org.GraphDefined.Vanaheimr.XMPPConsole`
 dotnet test XMPPConsole.Tests/XMPPConsole.Tests.csproj
 ```
 
-Twenty-one tests on two questions, and both are things that can be got wrong
-invisibly.
+Twenty-nine tests on three questions, and all three are things that can be got
+wrong invisibly.
 
 Eight ask whether the input line survives an output that comes unasked — a log
 line written past the prompt looks fine in isolation and only shows up while
 somebody is typing, to the one person it happened to.
 
-The other thirteen are about the chat log, and there the invisible part is that
-the input comes from strangers. A JID becomes a directory name, a message
-becomes a download: the tests are accordingly about a resource called
-`..\..\Windows` and about a link inside a sentence. NUnit, in the same versions
-as the other Vanaheimr suites.
+Thirteen are about the chat log and what it fetches, and there the invisible
+part is that the input comes from strangers. A JID becomes a directory name, a
+message becomes a download: the tests are accordingly about a resource called
+`..\..\Windows` and about a link inside a sentence.
+
+The last eight ask which endpoints this client will open at all — `ws://` is
+refused unless `--insecure` says otherwise, which is one comparison and exactly
+the kind of thing that stays silently correct until the day it is silently not.
+NUnit, in the same versions as the other Vanaheimr suites.
+
+All twenty-nine run on Windows and on Debian 13, and that is not symmetry for
+its own sake: what a stranger's name becomes as a *file* name is a platform's
+answer. `..\..\Windows` is one segment on Linux and three on Windows, and `NUL`
+is a device on one and an ordinary name on the other. Checked on one platform,
+a sanitiser is checked in one of the two situations it exists for.
 
 Reading and decrypting an `aesgcm://` URL is checked with
 [Ratatoskr](https://github.com/Vanaheimr/Ratatoskr) rather than here — it is

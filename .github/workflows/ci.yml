@@ -5,7 +5,7 @@ on:
     branches: [master]
   pull_request:
     branches: [master]
-  # Manual runs from the Actions tab ("Run workflow").
+  # Manual runs from the Actions tab ("Run workflow"), same as nightly.yml.
   workflow_dispatch:
 
 concurrency:
@@ -27,21 +27,66 @@ concurrency:
 
 jobs:
   build-and-test:
-    # windows-latest, like Ratatoskr, Hermod and Styx. Here the reason is
-    # inherited twice over rather than our own: a console application is
-    # platform-neutral, but it builds Ratatoskr, and that one builds Hermod,
-    # which pulls in System.Diagnostics.PerformanceCounter, System.IO.Ports and
-    # System.Drawing.Common. Linux has since been seen to pass in the
-    # XMPPConformanceTests suite, which builds the same chain on Debian 13, so
-    # a second matrix entry here is now a question of cost rather than of doubt.
-    runs-on: windows-latest
+    # Two legs, as in Hermod and XMPPConformanceTests. This ran on
+    # windows-latest alone, with a note that a second entry was "a question of
+    # cost rather than of doubt" because the conformance suite had been seen to
+    # build the same chain on Debian 13. Building is not running, and the
+    # difference is not decorative here: this suite is about what a name a
+    # stranger chose becomes once it is a *file* name, and the answer is a
+    # platform's. `..\..\Windows` is one segment on Linux and three on Windows;
+    # NUL is a device on one and an ordinary name on the other. A sanitiser
+    # checked on one platform is a sanitiser checked in one of the two
+    # situations it exists for.
+    #
+    # Measured before this leg was added: 29 of 29 on Debian 13 (trixie) with
+    # .NET 10.0.302, nothing skipped — the same 29 the Windows leg has been
+    # reporting.
+    #
+    # fail-fast is off on purpose: "red on exactly one platform" is the most
+    # valuable signal this matrix produces, so one leg must not cancel the
+    # other.
+    #
+    # `leg` exists so the two runs can be told apart by name rather than by
+    # runner image: the Linux leg runs on ubuntu-latest but IS Debian 13, and
+    # an artifact called "test-results-ubuntu-latest" would say the opposite of
+    # what it contains.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            leg: windows-latest
+          - os: ubuntu-latest
+            container: debian:13
+            leg: debian-13-container
+    name: ${{ matrix.leg }}
+    runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
     steps:
-      # Before the checkout, not after: the submodules are fetched by that step,
-      # and Hermod carries FontAwesome icon files whose paths exceed MAX_PATH
-      # once nested under the runner's workspace and libs/Hermod. Without this
-      # the submodule checkout fails with "Filename too long" and leaves the
-      # working tree half-populated.
-      - name: Allow long paths
+
+      # git BEFORE the checkout, which is the unusual part — and it has to be.
+      # actions/checkout only produces a git clone when it finds a git binary;
+      # without one it silently falls back to downloading a source tarball over
+      # the REST API, and that path cannot fetch submodules at all. Here that
+      # means it would fetch no Ratatoskr, no Hermod and no Styx, and the build
+      # would fail on a missing project reference rather than on anything true.
+      #
+      # The rest is what a bare debian:13 needs before setup-dotnet can install
+      # the SDK: curl for the install script, ICU and tzdata for globalization,
+      # libssl3t64 for crypto, ca-certificates for NuGet over HTTPS. Package
+      # names verified on trixie.
+      - name: Install git and the .NET prerequisites (Debian container)
+        if: runner.os == 'Linux'
+        run: apt-get update && apt-get install -y --no-install-recommends ca-certificates curl git libicu76 libssl3t64 libstdc++6 tzdata
+
+      # Windows only, and also before the checkout: the submodules are fetched
+      # by that step, and Hermod carries FontAwesome icon files whose paths
+      # exceed MAX_PATH once nested under the runner's workspace and
+      # libs/Hermod. Without this the submodule checkout fails with "Filename
+      # too long" and leaves the working tree half-populated. Linux has no such
+      # limit and needs nothing here.
+      - name: Allow long paths (Windows)
+        if: runner.os == 'Windows'
         run: git config --system core.longpaths true
 
       # One checkout, which is the whole build: libs/ pins Styx, Hermod and
@@ -58,8 +103,9 @@ jobs:
       #
       # What is given up is real and belongs here rather than in a commit
       # message nobody reads twice: a pinned build does not notice a breaking
-      # change upstream. XMPPConformanceTests' nightly builds this chain at
-      # master and is where that question gets asked.
+      # change upstream. That is nightly.yml's question now — it runs this same
+      # matrix with the submodules moved to master — and XMPPConformanceTests'
+      # nightly asks it once more with real far sides behind it.
       - uses: actions/checkout@v7
         with:
           submodules: true
@@ -73,16 +119,22 @@ jobs:
       - name: Build
         run: dotnet build XMPPConsole.Tests/XMPPConsole.Tests.csproj --configuration Release
 
-      # Two questions, and both are things that can be got wrong invisibly.
+      # Three questions now, and all three are things that can be got wrong
+      # invisibly.
       #
       # Does the input line survive an output that comes unasked - the console
       # writes while somebody is typing, and a broken prompt is only ever seen
       # by the person it happened to.
       #
-      # And what does a JID become once it is a directory name. The chat log
-      # turns a name a stranger chose into a path and an incoming message into
-      # a download, so the tests are about the cases a stranger picks: a
-      # resource called '..\..\Windows', a link inside a sentence.
+      # What does a JID become once it is a directory name. The chat log turns
+      # a name a stranger chose into a path and an incoming message into a
+      # download, so the tests are about the cases a stranger picks: a resource
+      # called '..\..\Windows', a link inside a sentence.
+      #
+      # And which endpoints this client will open at all. `ws://` is refused
+      # unless --insecure says otherwise, which is a single comparison and
+      # exactly the kind of thing that is silently correct until the day it is
+      # silently not.
       #
       # The protocol is not checked in this gate - that suite lives with
       # Ratatoskr, and everything needing a foreign implementation lives in
@@ -90,9 +142,32 @@ jobs:
       # decrypting an aesgcm:// URL is checked there too, since D107 moved it
       # where it belongs; what stays here is only whether to fetch at all.
       #
-      # Expect 29 passed, 0 skipped. Read anything skipped as a question, not
-      # as noise: the number of skipped tests is the only thing that tells a
-      # run which measured something from one which measured nothing.
+      # Expect 29 passed, 0 skipped, on both legs. Read anything skipped as a
+      # question, not as noise: the number of skipped tests is the only thing
+      # that tells a run which measured something from one which measured
+      # nothing.
       - name: Test
         timeout-minutes: 15
-        run: dotnet test XMPPConsole.Tests/XMPPConsole.Tests.csproj --configuration Release --no-build --logger "console;verbosity=normal"
+        run: >
+          dotnet test XMPPConsole.Tests/XMPPConsole.Tests.csproj --configuration Release --no-build
+          --logger "console;verbosity=normal"
+          --logger "trx;LogFileName=${{ matrix.leg }}.trx"
+          --results-directory artifacts
+
+      # The console log answers "did it pass" and almost nothing else, and it
+      # ages out with the run. TRX keeps the outcome, duration, error message,
+      # stack trace and — the part no console log carries at normal verbosity —
+      # the reason for every skip. With two legs it is also the shortest way to
+      # see which of the two a failure belongs to.
+      #
+      # !cancelled() rather than success(): a red run is when these files matter
+      # most, so uploading only on green would discard the evidence in exactly
+      # that case. A build that fails before the test step leaves no .trx, which
+      # upload-artifact reports as a warning rather than a second failure — the
+      # compile error is the finding there.
+      - name: Upload test results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-${{ matrix.leg }}
+          path: artifacts/*.trx
