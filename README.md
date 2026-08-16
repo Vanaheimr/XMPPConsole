@@ -207,7 +207,7 @@ The built executable is `XMPPConsole` and takes the same options:
 
 | Option | Meaning |
 |---|---|
-| `-j`, `--jid <jid>` | JID in the form `user@domain` |
+| `-j`, `--jid <jid>` | JID in the form `user@domain`. A resource may be written along — `user@domain/phone` then asks the server for exactly that resource instead of `console-<pid>` |
 | `-p`, `--password <pw>` | Password |
 | `-w`, `--ws`, `--websocket <uri>` | WebSocket endpoint, e.g. `wss://xmpp.example.com:5281/xmpp-websocket`. `wss://` only, see [below](#why-ws-is-refused) |
 | `--insecure` | Allow a `ws://` endpoint anyway |
