@@ -149,6 +149,47 @@ class Program
         {
             Console.WriteLine("\n[*] Ended.");
         }
+        catch (SaslDowngradeException ex)
+        {
+
+            Console.WriteLine($"\n[!] Error: {ex.Message}");
+
+            // The refusal without this line is a dead end: it names the demand
+            // and stops, and --sasl - which exists for exactly this moment -
+            // stands only in --help, where nobody is looking once the program
+            // has already started. Reported by somebody whose ejabberd
+            // announced PLAIN and SCRAM-SHA-1, which is what a stock one does.
+            //
+            // Three causes, and only one of them is answered by lowering the
+            // demand. Saying "--sasl" to the other two would be talking the
+            // user out of the warning they were just given.
+            switch (ex.Cause)
+            {
+
+                case SaslDowngradeCause.BelowConfiguredMinimum:
+                    Console.WriteLine(
+                        $"    If {ex.Offered} is really all your server offers, say so:\n" +
+                        $"    --sasl {ex.Offered}");
+                    break;
+
+                case SaslDowngradeCause.BelowPinnedMechanism:
+                    Console.WriteLine(
+                        $"    This server logged in with {ex.Demanded} before. A server does not\n" +
+                        $"    lose a mechanism by itself - treat this as a man in the middle until\n" +
+                        $"    you know otherwise, and check the server rather than lowering the bar.");
+                    break;
+
+                case SaslDowngradeCause.ForgedAnnouncement:
+                    Console.WriteLine(
+                        $"    The server signed a different list of mechanisms than the one that\n" +
+                        $"    arrived here (XEP-0474), so something in between changed it in\n" +
+                        $"    flight. This is not a configuration problem and --sasl is not the\n" +
+                        $"    answer: do not retry over this network.");
+                    break;
+
+            }
+
+        }
         catch (Exception ex)
         {
             Console.WriteLine($"\n[!] Error: {ex.Message}");
@@ -360,12 +401,29 @@ class Program
         // nobody signs. The pinning in Ratatoskr closes every login after the
         // first - this closes the first.
         //
-        // SCRAM-SHA-256 and not SCRAM-SHA-1, because everything this console is
-        // pointed at offers it: Prosody, ejabberd, and the XMPPServer that comes
-        // with Ratatoskr, whose default announcement is exactly these three
-        // names. A server that cannot is told apart from an attack by nothing
-        // this program can see, so it is refused - with a message that names
-        // --sasl, which is how somebody who knows their server says so.
+        // SCRAM-SHA-256 and not SCRAM-SHA-1, and this said something false
+        // until a real server disproved it. It claimed that "everything this
+        // console is pointed at offers it: Prosody, ejabberd, and the
+        // XMPPServer that comes with Ratatoskr". Only the third was ever true.
+        // A stock ejabberd 23.01 with auth_password_format: scram announces
+        //
+        //     <mechanism>PLAIN</mechanism><mechanism>SCRAM-SHA-1</mechanism>
+        //
+        // because SCRAM key material is derived through one hash and stored,
+        // so a server can only offer the variants it has material for.
+        // auth_scram_hash defaults to sha, and moving it to sha256 invalidates
+        // every stored password. Prosody's internal_hashed is the same story.
+        // The claim was generalised from the one server the test suite talks
+        // to, which is our own.
+        //
+        // The value stays anyway, and that is a decision rather than inertia.
+        // The one server this was measured against went to SCRAM-SHA-256 and
+        // dropped PLAIN rather than stay as it was - a strict default found a
+        // weaker configuration and it got fixed, which is what a strict default
+        // is for. What was actually wrong was that the refusal named no way
+        // out; it does now, in the catch above. Whoever cannot change their
+        // server - hosted, corporate, somebody else's - says --sasl SCRAM-SHA-1
+        // and is in.
         var sasl = "SCRAM-SHA-256";
 
         for (int i = 0; i < args.Length; i++)
