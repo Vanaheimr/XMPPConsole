@@ -189,9 +189,9 @@ A peer can exhaust process memory with a single WebSocket or TCP frame. RFC 6120
 
 The crypto itself (X3DH, double ratchet, payload AES, small-order check, `MaxSkip = 1000`, bundle signature) is careful and tested against python-omemo. The surrounding operations are not at the same level.
 
-- **The store is plaintext** next to the executable (`omemo-user_example.com.json`), including the identity key and every chain key. File mode is not set to `0600`. Anyone who can read the file can read the conversations.
+- ✅ **The store is plaintext** next to the executable (`omemo-user_example.com.json`), including the identity key and every chain key. File mode is not set to `0600`. Anyone who can read the file can read the conversations. *(The mode is set now, at creation rather than afterwards. Still plaintext, and the code says so: against another account on the machine this is the difference between "may read" and "may not"; against whoever runs as this user, or takes the disk, it is nothing. The OS-backed encryption the report offers as optional is a decision about where a key comes from, not a line in a writer.)*
 - ✅ **Prekeys are consumed and the bundle is not republished.** `TakePreKey` updates local state but does not publish again. Used prekeys stay in the public bundle; new ones are not added. XEP-0384 requires replenishment. *(Refilled and republished on every consumption. It was worse than a missing MUST: `X3DH.Accept` throws on a spent prekey, so the second stranger to reach into a stale bundle got a first message nobody could read.)*
-- **The signed prekey is never rotated on a schedule.** Without rotation, compromise of the current SPK undoes part of the forward secrecy the rotation exists for.
+- ✅ **The signed prekey is never rotated on a schedule.** Without rotation, compromise of the current SPK undoes part of the forward secrecy the rotation exists for. *(Weekly, checked when an identity is loaded. `RotateSignedPreKey` was already built — what was missing was not the mechanism but the question, because nothing recorded how old the key was. One correction to the wording: the rotation does not undo forward secrecy for messages already sent, which hang on the ratchet; it bounds how far back a stolen key opens **new** sessions.)*
 - **`TrustNewDevicesBlindly = true`.** Blind trust before verification. A deliberate trade-off, but a new device is accepted until someone compares fingerprints.
 - ✅ **`OmemoManager` is barely serialised.** Encrypt and decrypt can run in parallel (`Task.Run` in `TryProcessEncrypted`); only `BuildSessionAsync` takes the lock. Two concurrent messages can read the same ratchet state and make one message unreadable. *(One semaphore per bare JID and device now spans the whole load-to-save. The report is right that it makes one message unreadable — and the test proving it fails deterministically, not by timing.)*
 
@@ -207,7 +207,9 @@ The crypto itself (X3DH, double ratchet, payload AES, small-order check, `MaxSki
 
 ---
 
-### 9. Connection constructor does not parse JIDs per RFC 7622
+### 9. ✅ Connection constructor does not parse JIDs per RFC 7622
+
+*Closed in `5ef6041`. One correction to the reasoning: a login JID has no resourcepart to speak of — the resource comes from binding — so `a@b@c` being refused is right, not a defect. What was a defect is the direction the report names first: `alice@example.com/phone` passed the split and made the domainpart `example.com/phone`, so the fallback endpoint read `wss://example.com/phone:5443/ws`. A resource written along is now taken as the wish it is.*
 
 The constructor splits on `@` and requires exactly two pieces:
 
@@ -228,12 +230,14 @@ _domain    = parts[1];
 
 ### 10. Server (`XMPPServer`), if anyone runs it for real
 
-- No rate limiting, no account lockout. The README already says so (RFC 6120 §13.11).
-- PLAIN is offered by default.
-- Authentication is parsed with a regex on the raw frame (`<auth[^>]*>([^<]*)</auth>`), not with the XML parser — brittle and easy to confuse.
-- Decoy salts for unknown users change after a restart → account enumeration via the challenge.
-- PLAIN has different timing from SCRAM (also documented).
-- `FileAccountStore` writes StoredKey / ServerKey in the clear, without restricting file permissions.
+*Four of these are closed in `b4162b1`; the three left carry their reason.*
+
+- ✅ No rate limiting, no account lockout. The README already says so (RFC 6120 §13.11). *(Five failed attempts per stream, then the stream ends. Per stream and not per account, because a counter on the account is a lock a stranger can turn. It does **not** bound attempts per unit of time — that means counting per remote address, and no address reaches this layer: the sessions are built by the WebSocket and TCP links and neither hands one down.)*
+- PLAIN is offered by default. *(Left as it is. Over TLS it is not the hole it looks like, and the client side of this repository now demands SCRAM-SHA-256 of its own accord — see finding 3.)*
+- ✅ Authentication is parsed with a regex on the raw frame (`<auth[^>]*>([^<]*)</auth>`), not with the XML parser — brittle and easy to confuse. *(Read with the parser now, `<response/>` too. The `[^>]*` is where it went wrong: an attribute value may contain a `>`, so a frame carrying one ended the match inside the attribute list.)*
+- ✅ Decoy salts for unknown users change after a restart → account enumeration via the challenge. *(The key they are derived from lives in the account store now. The code's own comment had named this as the missing piece.)*
+- PLAIN has different timing from SCRAM (also documented). *(Left as it is. Closing it means giving both paths the same work regardless of outcome, which is a rebuild of the authentication path rather than a fix in it.)*
+- ✅ `FileAccountStore` writes StoredKey / ServerKey in the clear, without restricting file permissions. *(Owner-only now, and the mode goes on at creation — setting it afterwards leaves a window as long as the writing. Still in the clear, and that is the point of the mode: the StoredKey is what the server compares against, so whoever reads it can answer any SCRAM challenge for that account.)*
 - `Ed25519Math` is not constant-time (`BigInteger`, bit-dependent branches). Acceptable for a local client; a side channel if a server computes OMEMO signatures for remote peers.
 
 ---
@@ -262,8 +266,8 @@ _domain    = parts[1];
 3. **Transport:** ✅ refuse `ws://`. Follow host-meta redirects only to `https://`. Check the final URI. Bind the `wss://` host to the JID domain or an allow-list.
 4. ✅ **SCRAM:** reject `i < 4096`; impose a hard maximum (for example 1_000_000).
 5. ✅ **DoS:** maximum frame size (for example 1–4 MiB) on both receive paths and in `XmlStreamSplitter`.
-6. **OMEMO store:** file mode `0600`, optional OS-backed encryption. ✅ Republish prekeys after use. Rotate the signed prekey.
-7. **Console:** ✅ default `MinimumSaslMechanism = "SCRAM-SHA-256"`. Accept the JID through `JidUtilities.Parse`.
+6. **OMEMO store:** ✅ file mode `0600`, optional OS-backed encryption. ✅ Republish prekeys after use. ✅ Rotate the signed prekey.
+7. **Console:** ✅ default `MinimumSaslMechanism = "SCRAM-SHA-256"`. ✅ Accept the JID through `JidUtilities.Parse`.
 
 ---
 
