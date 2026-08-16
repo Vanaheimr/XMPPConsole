@@ -184,10 +184,10 @@ A peer can exhaust process memory with a single WebSocket or TCP frame. RFC 6120
 The crypto itself (X3DH, double ratchet, payload AES, small-order check, `MaxSkip = 1000`, bundle signature) is careful and tested against python-omemo. The surrounding operations are not at the same level.
 
 - **The store is plaintext** next to the executable (`omemo-user_example.com.json`), including the identity key and every chain key. File mode is not set to `0600`. Anyone who can read the file can read the conversations.
-- **Prekeys are consumed and the bundle is not republished.** `TakePreKey` updates local state but does not publish again. Used prekeys stay in the public bundle; new ones are not added. XEP-0384 requires replenishment.
+- ✅ **Prekeys are consumed and the bundle is not republished.** `TakePreKey` updates local state but does not publish again. Used prekeys stay in the public bundle; new ones are not added. XEP-0384 requires replenishment. *(Refilled and republished on every consumption. It was worse than a missing MUST: `X3DH.Accept` throws on a spent prekey, so the second stranger to reach into a stale bundle got a first message nobody could read.)*
 - **The signed prekey is never rotated on a schedule.** Without rotation, compromise of the current SPK undoes part of the forward secrecy the rotation exists for.
 - **`TrustNewDevicesBlindly = true`.** Blind trust before verification. A deliberate trade-off, but a new device is accepted until someone compares fingerprints.
-- **`OmemoManager` is barely serialised.** Encrypt and decrypt can run in parallel (`Task.Run` in `TryProcessEncrypted`); only `BuildSessionAsync` takes the lock. Two concurrent messages can read the same ratchet state and make one message unreadable.
+- ✅ **`OmemoManager` is barely serialised.** Encrypt and decrypt can run in parallel (`Task.Run` in `TryProcessEncrypted`); only `BuildSessionAsync` takes the lock. Two concurrent messages can read the same ratchet state and make one message unreadable. *(One semaphore per bare JID and device now spans the whole load-to-save. The report is right that it makes one message unreadable — and the test proving it fails deterministically, not by timing.)*
 
 **Fix.** Create the store with mode `0600`; optionally protect it with DPAPI / `ProtectedData`. Republish the bundle after consuming a prekey. Rotate the signed prekey. Serialise encrypt/decrypt on the same session.
 
@@ -256,7 +256,7 @@ _domain    = parts[1];
 3. **Transport:** ✅ refuse `ws://`. Follow host-meta redirects only to `https://`. Check the final URI. Bind the `wss://` host to the JID domain or an allow-list.
 4. ✅ **SCRAM:** reject `i < 4096`; impose a hard maximum (for example 1_000_000).
 5. **DoS:** maximum frame size (for example 1–4 MiB) on both receive paths and in `XmlStreamSplitter`.
-6. **OMEMO store:** file mode `0600`, optional OS-backed encryption. Republish prekeys after use. Rotate the signed prekey.
+6. **OMEMO store:** file mode `0600`, optional OS-backed encryption. ✅ Republish prekeys after use. Rotate the signed prekey.
 7. **Console:** ✅ default `MinimumSaslMechanism = "SCRAM-SHA-256"`. Accept the JID through `JidUtilities.Parse`.
 
 ---
