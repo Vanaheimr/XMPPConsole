@@ -46,7 +46,9 @@ These belong in the report so the list of problems does not make the code look w
 
 ### 1. ✅ IQ replies accepted without a `from` check
 
-*Closed in `efb86e5` for `SendIqAsync`: every pending request carries whom it was addressed to, and an answer naming a sender has to name that one. An answer naming nobody still passes — RFC 6120, section 8.1.2.1 makes the server stamp the real sender onto anything a client sends, so a peer cannot produce one. Two parts of this finding are **not** closed: `DiscoManager` and `PingManager` keep pending maps of their own, and the identifiers stayed countable, because the comparison is the fix and random identifiers only raise the price of guessing.*
+*Closed in `efb86e5` for `SendIqAsync`: every pending request carries whom it was addressed to, and an answer naming a sender has to name that one. An answer naming nobody still passes — RFC 6120, section 8.1.2.1 makes the server stamp the real sender onto anything a client sends, so a peer cannot produce one. `DiscoManager` and `PingManager` followed in `01b5494`, with the rule moved to a single `IqAnswerOrigin` — three copies of a security check are three chances for two of them to be wrong. Still open, and on purpose: the identifiers stayed countable, because the comparison is the fix and random identifiers only raise the price of guessing.
+
+The first version of the rule was too strict, and the suite said so. It demanded the addressee and nobody else, which refuses the answer one's own server sends **instead** of an addressee it cannot reach — a `remote-server-not-found` became silence until the caller's timeout. Only one test failed over it while twenty were paying for it in timeouts: five minutes of the suite, and every one of those tests stayed green, because a refused answer and no answer look the same from the outside.*
 
 `SendIqAsync` remembers only the stanza `id`. `TryCompleteIq` completes the first matching `result` or `error` IQ, **regardless of `from`**.
 
@@ -136,7 +138,9 @@ RFC 7677 requires at least 4096 iterations for SCRAM-SHA-256. Neither bound exis
 
 ## Medium
 
-### 5. Encrypted carbons bypass the spoofing check
+### 5. ✅ Encrypted carbons bypass the spoofing check
+
+*Closed in `01b5494`, except the `to` affix. One place decides now what a carbon is and whether it may be believed: `CarbonManager.UnwrapVerified` asks after the sender and walks direct children at every step, and `ProcessCarbon` uses the same helpers so the two readings cannot drift apart again. The report is right about `HasNamespace` and `Descendants()` — and that half the sender check would not have caught anyway, since a stanza with a planted `<forwarded/>` can come from a real contact. `SceEnvelope.TryRead` no longer skips its comparison for a missing `<from/>`. Setting `to` on encrypt is **not** done: `EncryptAsync` takes several recipients and builds one envelope, so there is no single correct value, and the payload is encrypted to particular device keys anyway.*
 
 XEP-0280: carbons MUST come only from the account’s own bare JID. `CarbonManager` enforces that. The OMEMO branch runs **before** it and without that check:
 
@@ -169,7 +173,9 @@ Full impersonation usually still fails because the ratchet session is keyed to t
 
 ---
 
-### 6. No stanza / frame size limit
+### 6. ✅ No stanza / frame size limit
+
+*Closed in `01b5494`: four mebibytes on both client receive loops and in `XmlStreamSplitter`, and the connection is given up rather than the stanza — reading a frame to its end in order to discard it is doing the work that was asked for. One correction to the text: `XmlStreamSplitter` is server-side only, so the client never used it; the client's exposure is its own two loops, and its attacker is a hostile server or a man in the middle, not "a peer".*
 
 Neither client nor server defines a `MaxStanza`. The receive loop appends into a `StringBuilder` with no cap. `XmlStreamSplitter.rest` grows without bound as well.
 
@@ -252,10 +258,10 @@ _domain    = parts[1];
 ## Recommended order of work
 
 1. ✅ **`SendIqAsync`:** store the expected `from` (or “own server / no `from`”) and compare it before completing the wait. Use random IDs (`Guid`), not `pep-1`.  *(The comparison is in; the identifiers stayed countable.)*
-2. **OMEMO carbons:** spoofing check first, then decrypt. Reject a missing SCE `<from/>` when `expectedFrom` is set. Set `to` on encrypt.
+2. ✅ **OMEMO carbons:** spoofing check first, then decrypt. Reject a missing SCE `<from/>` when `expectedFrom` is set. Set `to` on encrypt.  *(The first two; `to` stays out — see finding 5.)*
 3. **Transport:** ✅ refuse `ws://`. Follow host-meta redirects only to `https://`. Check the final URI. Bind the `wss://` host to the JID domain or an allow-list.
 4. ✅ **SCRAM:** reject `i < 4096`; impose a hard maximum (for example 1_000_000).
-5. **DoS:** maximum frame size (for example 1–4 MiB) on both receive paths and in `XmlStreamSplitter`.
+5. ✅ **DoS:** maximum frame size (for example 1–4 MiB) on both receive paths and in `XmlStreamSplitter`.
 6. **OMEMO store:** file mode `0600`, optional OS-backed encryption. ✅ Republish prekeys after use. Rotate the signed prekey.
 7. **Console:** ✅ default `MinimumSaslMechanism = "SCRAM-SHA-256"`. Accept the JID through `JidUtilities.Parse`.
 
