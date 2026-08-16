@@ -76,7 +76,7 @@ class Program
         if (options is null)
             return;
 
-        var (jid, password, wsUri, verbose, chatLogs, storeChatMedia, _, sasl) = options.Value;
+        var (jid, password, wsUri, verbose, chatLogs, storeChatMedia, _, sasl, trustAnnouncement) = options.Value;
 
         if (string.IsNullOrEmpty(jid) || string.IsNullOrEmpty(password))
         {
@@ -137,6 +137,12 @@ class Program
             // whoever wrote it wanted to rule out.
             _client.Connection.MinimumSaslMechanism = sasl;
 
+            // Only ever loosens, and only the XEP-0474 check. It cannot make a
+            // login count as verified - the connection still reports Mismatch
+            // afterwards and logs a warning on every one it lets through.
+            if (trustAnnouncement)
+                _client.Connection.RefuseOnAnnouncementMismatch = false;
+
             WireUpUserInterface(_client);
 
             await _client.ConnectAsync(cts.Token);
@@ -179,12 +185,20 @@ class Program
                         $"    you know otherwise, and check the server rather than lowering the bar.");
                     break;
 
+                // Deliberately not "you are being attacked". Two things produce
+                // this and they are indistinguishable from here: somebody in
+                // between shortened the announcement, or the server implements
+                // a later revision of XEP-0474 - which is Experimental at 0.5.0
+                // - than this client does. Asserting the first would be the
+                // same mistake as the SASL floor message that started all this:
+                // confident, actionable and sometimes flatly wrong.
                 case SaslDowngradeCause.ForgedAnnouncement:
                     Console.WriteLine(
-                        $"    The server signed a different list of mechanisms than the one that\n" +
-                        $"    arrived here (XEP-0474), so something in between changed it in\n" +
-                        $"    flight. This is not a configuration problem and --sasl is not the\n" +
-                        $"    answer: do not retry over this network.");
+                        $"    Either something in between changed the mechanism list in flight,\n" +
+                        $"    or this server implements a later revision of XEP-0474 than this\n" +
+                        $"    client. From here the two look the same.\n" +
+                        $"    On a network you do not trust, stop. If you have established that\n" +
+                        $"    it is a version difference: --trust-announcement");
                     break;
 
             }
@@ -384,7 +398,7 @@ class Program
 
     private static (string jid, string password, string? wsUri, bool verbose,
                     string? chatLogs, bool storeChatMedia, bool insecure,
-                    string sasl)? ParseArguments(string[] args)
+                    string sasl, bool trustAnnouncement)? ParseArguments(string[] args)
     {
 
         string? jid = null;
@@ -426,6 +440,16 @@ class Program
         // and is in.
         var sasl = "SCRAM-SHA-256";
 
+        // XEP-0474 is Experimental at 0.5.0, and the check on it is
+        // fail-closed. If a later revision changes how the announcement is
+        // hashed, a server on that revision produces an <h> this client does
+        // not expect - and from here that is indistinguishable from somebody
+        // shortening the list in flight. This is the way through for whoever
+        // has worked out which of the two it is; it does not make the login
+        // count as verified, and every one it lets through is logged as a
+        // warning.
+        var trustAnnouncement = false;
+
         for (int i = 0; i < args.Length; i++)
         {
 
@@ -462,6 +486,9 @@ class Program
                     break;
                 case "--insecure":
                     insecure = true;
+                    break;
+                case "--trust-announcement":
+                    trustAnnouncement = true;
                     break;
                 case "--sasl" when inlineValue is not null || i + 1 < args.Length:
                     sasl = inlineValue ?? args[++i];
@@ -522,7 +549,7 @@ class Program
                               "whoever sits on the way decides which SASL mechanism is on offer.");
         }
 
-        return (jid, password, wsUri, verbose, chatLogs, storeChatMedia, insecure, sasl);
+        return (jid, password, wsUri, verbose, chatLogs, storeChatMedia, insecure, sasl, trustAnnouncement);
 
     }
 
@@ -2245,6 +2272,14 @@ Options:
                           SCRAM-SHA-256. Lower it only for a server that
                           cannot: --sasl SCRAM-SHA-1, or --sasl PLAIN, which
                           demands nothing.
+      --trust-announcement
+                          carry on when the server signs a different mechanism
+                          list than the one that arrived (XEP-0474). That is
+                          either a man in the middle or a server on a later
+                          revision of an experimental XEP, and nothing here
+                          tells the two apart - so this is for whoever has
+                          established which. The login is still not counted as
+                          verified and every one is logged as a warning.
   -v, --verbose           verbose logging (trace level)
       --chatlogs <dir>    keep the conversations as text under
                           <dir>/<jid>/<jid>_yyyyMM.log, presence included
