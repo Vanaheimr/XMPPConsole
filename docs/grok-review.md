@@ -247,9 +247,9 @@ _domain    = parts[1];
 | Area | Issue |
 |---|---|
 | PEP device list | `ProcessPepEventAsync` still runs after `PubSub.ProcessEvent` has rejected the sender. Re-publish only happens when `from` is the own bare JID — that relies on the server overwriting `from`. |
-| PubSub authorisation form | Any message with a matching data form raises `OnPubSubSubscriptionRequest`, with no check that it came from the account’s own PubSub service. Social engineering toward `/pubsub request`. |
+| PubSub authorisation form ✅ | Any message with a matching data form raises `OnPubSubSubscriptionRequest`, with no check that it came from the account’s own PubSub service. Social engineering toward `/pubsub request`. *(Checked and true; closed in `1052b5a`. Recognised by the missing localpart rather than by naming one service — a component is addressed as `pubsub.example.com` and a user never is, which also covers an account with nodes on several services.)* |
 | Auto receipts / auto markers | Every 1:1 message with a request is acknowledged automatically. That confirms the resource is reachable. Groupchat is correctly excluded. |
-| Chat markers | No spoofing check comparable to receipts. A third party can fake “read” for someone else’s message. |
+| Chat markers ✅ | No spoofing check comparable to receipts. A third party can fake “read” for someone else’s message. *(Checked and true; closed in `1052b5a`. The receipt tracker already knew whom a message went to — markable messages are entered in it now, and the memory had to be split, because a receipt consumes its entry while markers keep coming for the same message.)* |
 | Resource `console-<pid>` | Leaks the process id, makes the full JID guessable, collides if two clients share a process. |
 | `/raw` | Prints bodies and auth frames (documented). |
 | `-p` on the command line | Lands in the shell history and in `ps` (documented). |
