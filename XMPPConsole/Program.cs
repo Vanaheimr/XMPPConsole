@@ -19,6 +19,8 @@
 
 using Microsoft.Extensions.Logging;
 
+using org.GraphDefined.Vanaheimr.Illias;
+using org.GraphDefined.Vanaheimr.Hermod.HTTP;
 using org.GraphDefined.Vanaheimr.Ratatoskr;
 using org.GraphDefined.Vanaheimr.XMPPConsole.ChatLogs;
 using org.GraphDefined.Vanaheimr.XMPPConsole.ConsoleUI;
@@ -76,7 +78,8 @@ class Program
         if (options is null)
             return;
 
-        var (jid, password, wsUri, verbose, chatLogs, storeChatMedia, _, sasl, trustAnnouncement) = options.Value;
+        var (jid, password, wsUri1, verbose, chatLogs, storeChatMedia, _, sasl, trustAnnouncement) = options.Value;
+        URL? wsUri = wsUri1.IsNotNullOrEmpty() ? URL.Parse(wsUri1) : null;
 
         if (string.IsNullOrEmpty(jid) || string.IsNullOrEmpty(password))
         {
