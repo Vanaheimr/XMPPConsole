@@ -282,7 +282,7 @@ class Program
         client.OnRosterItemAdded += (timestamp, sender, item, ct) =>
         {
             WriteSystemMessage($"Contact added: {item.DisplayName}");
-            _chatLog?.System(DateTime.Now, $"contact added: {item.DisplayName}", JidUtilities.Bare(item.Jid));
+            _chatLog?.System(DateTime.Now, $"contact added: {item.DisplayName}", JID.BareTextOf(item.Jid.ToString()));
 
             return Task.CompletedTask;
 
@@ -291,7 +291,7 @@ class Program
         client.OnRosterItemRemoved += (timestamp, sender, jid, ct) =>
         {
             WriteSystemMessage($"Contact removed: {jid}");
-            _chatLog?.System(DateTime.Now, "contact removed", JidUtilities.Bare(jid));
+            _chatLog?.System(DateTime.Now, "contact removed", JID.BareTextOf(jid.ToString()));
 
             return Task.CompletedTask;
 
@@ -301,7 +301,7 @@ class Program
         {
             WriteSystemMessage($"📩 Contact request from {from}: {status}");
             WriteSystemMessage($"   Use /accept {from} or /deny {from}");
-            _chatLog?.System(DateTime.Now, $"contact request: {status}", JidUtilities.Bare(from));
+            _chatLog?.System(DateTime.Now, $"contact request: {status}", JID.BareTextOf(from.ToString()));
 
             return Task.CompletedTask;
 
@@ -637,8 +637,8 @@ class Program
                     Console.WriteLine("No recipient set. Use /msg <jid> <message> or /to <jid>");
                 else
                 {
-                    Console.WriteLine($"  → Sent to {GetShortJid(_client.CurrentChatPartner!)}");
-                    LogMessage(JidUtilities.Bare(_client.CurrentChatPartner!),
+                    Console.WriteLine($"  → Sent to {GetShortJid(_client.CurrentChatPartner!.Value)}");
+                    LogMessage(_client.CurrentChatPartner!.Value.Bare.ToString(),
                                DateTime.Now,
                                ChatLogKind.Outgoing,
                                "me",
@@ -668,7 +668,7 @@ class Program
                 break;
 
             case "/to" or "/chat":
-                await client.SetChatPartnerAsync(string.IsNullOrEmpty(args) ? null : args);
+                await client.SetChatPartnerAsync(JID.Parse(string.IsNullOrEmpty(args) ? null : args));
                 Console.WriteLine(client.CurrentChatPartner == null
                                       ? "Chat recipient reset"
                                       : $"Chatting with: {client.CurrentChatPartner}");
@@ -682,9 +682,9 @@ class Program
                 }
                 else
                 {
-                    await client.SendMessageAsync(msgParts[0], msgParts[1]);
-                    Console.WriteLine($"  → Sent to {GetShortJid(msgParts[0])}");
-                    LogMessage(JidUtilities.Bare(msgParts[0]),
+                    await client.SendMessageAsync(JID.Parse(msgParts[0]), msgParts[1]);
+                    Console.WriteLine($"  → Sent to {GetShortJid(JID.Parse(msgParts[0]))}");
+                    LogMessage(JID.BareTextOf(msgParts[0]),
                                DateTime.Now,
                                ChatLogKind.Outgoing,
                                "me",
@@ -708,7 +708,7 @@ class Program
                 }
                 else
                 {
-                    Console.WriteLine($"  ✎ Corrected to {GetShortJid(client.CurrentChatPartner!)}");
+                    Console.WriteLine($"  ✎ Corrected to {GetShortJid(client.CurrentChatPartner!.Value)}");
                 }
                 break;
 
@@ -737,20 +737,20 @@ class Program
                 }
                 else
                 {
-                    await client.RemoveContactAsync(args);
+                    await client.RemoveContactAsync(JID.Parse(args));
                     Console.WriteLine($"Contact removed: {args.Trim()}");
                 }
                 break;
 
             case "/accept":
-                var accepted = await client.AcceptSubscriptionAsync(args);
+                var accepted = await client.AcceptSubscriptionAsync(JID.Parse(args));
                 Console.WriteLine(accepted == null
                                       ? "No pending contact requests."
                                       : $"Contact request accepted: {accepted}");
                 break;
 
             case "/deny":
-                var denied = await client.DenySubscriptionAsync(args);
+                var denied = await client.DenySubscriptionAsync(JID.Parse(args));
                 Console.WriteLine(denied == null
                                       ? "No pending contact requests."
                                       : $"Contact request denied: {denied}");
@@ -774,7 +774,7 @@ class Program
                 if (!await client.SendChatStateAsync(ChatState.Composing))
                     Console.WriteLine("No recipient set. Use /to <jid>");
                 else
-                    Console.WriteLine($"⌨️ Typing indicator sent to {GetShortJid(client.CurrentChatPartner!)}");
+                    Console.WriteLine($"⌨️ Typing indicator sent to {GetShortJid(client.CurrentChatPartner!.Value)}");
                 break;
 
             case "/paused":
@@ -898,7 +898,7 @@ class Program
         var targetDisplay = target ?? "Server";
 
         Console.WriteLine($"[*] Ping to {targetDisplay}...");
-        var rtt = await _client!.PingAsync(target, ct);
+        var rtt = await _client!.PingAsync(JID.Parse(target), ct);
 
         Console.WriteLine(rtt.HasValue
                               ? $"[+] Pong from {targetDisplay}: {rtt.Value.TotalMilliseconds:F1}ms"
@@ -931,7 +931,7 @@ class Program
                     jid = _client!.Domain;
 
                 Console.WriteLine($"[*] Disco#info for {jid}...");
-                var info = await _client!.DiscoverInfoAsync(jid, ct);
+                var info = await _client!.DiscoverInfoAsync(JID.Parse(jid), ct);
 
                 if (info != null)
                 {
@@ -954,7 +954,7 @@ class Program
 
             case "items":
                 Console.WriteLine($"[*] Disco#items for {jid}...");
-                var items = await _client!.DiscoverItemsAsync(jid, ct);
+                var items = await _client!.DiscoverItemsAsync(JID.Parse(jid), ct);
 
                 if (items != null)
                 {
@@ -1038,7 +1038,7 @@ class Program
                 // its name: two accounts on the same machine are two devices
                 // and must not share a fingerprint.
                 var file = Path.Combine(AppContext.BaseDirectory,
-                                        $"omemo-{client.BareJid.Replace('@', '_')}.json");
+                                        $"omemo-{client.BareJid.ToString().Replace('@', '_')}.json");
 
                 if (await client.EnableOmemoAsync(new OmemoFileStore(file)))
                 {
@@ -1064,7 +1064,7 @@ class Program
                     return;
                 }
 
-                var skipped = await client.SendEncryptedMessageAsync(parts[1], parts[2]);
+                var skipped = await client.SendEncryptedMessageAsync(JID.Parse(parts[1]), parts[2]);
 
                 Console.WriteLine($"[→] encrypted to {parts[1]}");
 
@@ -1127,7 +1127,7 @@ class Program
 
                 var decision = command == "trust" ? OmemoTrust.Trusted : OmemoTrust.Distrusted;
 
-                Console.WriteLine(client.Omemo!.SetTrust(parts[1], device, decision)
+                Console.WriteLine(client.Omemo!.SetTrust(JID.Parse(parts[1]), device, decision)
                                       ? $"[*] {parts[1]}/{device}: {decision}"
                                       : "[!] This device is unknown - about a key one has never " +
                                         "seen no decision can be made.");
@@ -1333,7 +1333,7 @@ class Program
             // A target can be given, because a PEP node belongs to an account
             // and not to the PubSub component of the domain.
             case "sub" or "subscribe":
-                var sub = await _client!.PubSubSubscribeAsync(nodeId, parts.Length > 2 ? parts[2] : null);
+                var sub = await _client!.PubSubSubscribeAsync(nodeId, JID.Parse(parts.Length > 2 ? parts[2] : null));
                 Console.WriteLine(sub is not null
                                       ? $"📢 Subscribed: {nodeId}" +
                                         (sub.SubId is not null ? $" (subid {sub.SubId})" : "")
@@ -1342,7 +1342,7 @@ class Program
 
             case "unsub" or "unsubscribe":
                 Console.WriteLine(await _client!.PubSubUnsubscribeAsync(nodeId,
-                                                                        parts.Length > 2 ? parts[2] : null,
+                                                                        JID.Parse(parts.Length > 2 ? parts[2] : null),
                                                                         parts.Length > 3 ? parts[3] : null)
                                       ? $"🔕 Subscription ended: {nodeId}"
                                       : $"⚠️ Subscription not ended: {nodeId} - see the log");
@@ -1377,7 +1377,7 @@ class Program
             // connection break the first is empty and the second the only way
             // back to the ids.
             case "sync":
-                var fetched = await _client!.PubSubGetSubscriptionsAsync(parts.Length > 1 ? parts[1] : null);
+                var fetched = await _client!.PubSubGetSubscriptionsAsync(JID.Parse(parts.Length > 1 ? parts[1] : null));
 
                 if (fetched is null)
                     Console.WriteLine("⚠️ Subscriptions not fetched - see the log");
@@ -1496,7 +1496,7 @@ class Program
                     return;
                 }
 
-                Console.WriteLine(await _client!.PubSubSetAffiliationAsync(nodeId, parts[2], wanted)
+                Console.WriteLine(await _client!.PubSubSetAffiliationAsync(nodeId, JID.Parse(parts[2]), wanted)
                                       ? $"👤 {parts[2]} is now {parts[3].ToLower()} at {nodeId}"
                                       : $"⚠️ Role not set: {nodeId} - see the log");
                 break;
@@ -1528,7 +1528,7 @@ class Program
 
                 var which = parts.Length > 3 ? parts[3] : null;
 
-                Console.WriteLine(await _client!.PubSubRemoveSubscriberAsync(nodeId, parts[2], which)
+                Console.WriteLine(await _client!.PubSubRemoveSubscriberAsync(nodeId, JID.Parse(parts[2]), which)
                                       ? $"🚪 {parts[2]} does not subscribe to {nodeId} any more" +
                                         (which is not null ? $" (subid {which})" : " (all subscriptions)")
                                       : $"⚠️ Subscriber not removed: {nodeId} - see the log");
@@ -1736,7 +1736,7 @@ class Program
                          ? parts[2].Split(',', StringSplitOptions.RemoveEmptyEntries)
                          : null;
 
-        await _client!.AddContactAsync(jid, name, groups);
+        await _client!.AddContactAsync(JID.Parse(jid), name, groups);
         Console.WriteLine($"Contact request sent to: {jid}");
 
     }
@@ -1750,7 +1750,7 @@ class Program
             return;
         }
 
-        var item = _client!.GetContact(jid);
+        var item = _client!.GetContact(JID.Parse(jid));
         if (item == null)
         {
             Console.WriteLine($"Contact not found: {jid}");
@@ -1845,7 +1845,7 @@ class Program
                           : $"[{message.Timestamp:HH:mm:ss}] ");
 
         Console.ForegroundColor = ConsoleColor.Green;
-        Console.Write($"{GetShortJid(message.From)}");
+        Console.Write($"{GetShortJid(JID.Parse(message.From.ToString()))}");
 
         // XEP-0308: a console cannot take back what has been written - the
         // correction therefore appears as a line of its own and says that it is
@@ -1874,10 +1874,10 @@ class Program
         // The timestamp of the message and not the one of this moment: a
         // message handed in late belongs in the log where it was said, which is
         // the whole point of XEP-0203.
-        LogMessage(message.FromBareJid,
+        LogMessage(message.FromBareJid.ToString(),
                    message.Timestamp,
                    ChatLogKind.Incoming,
-                   GetShortJid(message.From),
+                   GetShortJid(JID.Parse(message.From.ToString())),
                    message.Body,
                    NoteFor(message));
 
@@ -1906,10 +1906,10 @@ class Program
 
     }
 
-    private static void HandleChatState(string from, ChatState state)
+    private static void HandleChatState(JID from, ChatState state)
     {
 
-        var shortFrom = GetShortJid(from);
+        var shortFrom = GetShortJid(JID.Parse(from.ToString()));
 
         if (state == ChatState.Composing)
         {
@@ -1928,7 +1928,7 @@ class Program
 
     }
 
-    private static void HandleReceipt(string from, string messageId)
+    private static void HandleReceipt(JID from, string messageId)
     {
 
         using var scope = Output();
@@ -1967,10 +1967,10 @@ class Program
         // A carbon is the same conversation seen from another device, so it
         // belongs in the same file - under the far end, whichever direction it
         // went.
-        LogMessage(JidUtilities.Bare(carbon.IsSent ? carbon.OriginalTo : carbon.OriginalFrom),
+        LogMessage((carbon.IsSent ? carbon.OriginalTo : carbon.OriginalFrom).Bare.ToString(),
                    carbon.ReceivedAt,
                    carbon.IsSent ? ChatLogKind.Outgoing : ChatLogKind.Incoming,
-                   carbon.IsSent ? "me" : GetShortJid(carbon.OriginalFrom),
+                   carbon.IsSent ? "me" : GetShortJid(JID.Parse(carbon.OriginalFrom.ToString())),
                    carbon.Body,
                    "carbon");
 
@@ -1980,7 +1980,7 @@ class Program
     {
 
         using var scope = Output();
-        var shortFrom = GetShortJid(marker.From);
+        var shortFrom = GetShortJid(JID.Parse(marker.From));
         var symbol    = ChatMarkers.GetSymbol(marker.Type);
 
         Console.ForegroundColor = ConsoleColor.DarkCyan;
@@ -2062,11 +2062,11 @@ class Program
     /// </summary>
     private static readonly List<PubSubSubscribeAuthorization> _pendingRequests = [];
 
-    private static void HandlePresence(string from, string type)
+    private static void HandlePresence(JID from, string type)
     {
 
         // Ignore our own presence
-        if (JidUtilities.Bare(from).Equals(_client!.BareJid, StringComparison.OrdinalIgnoreCase))
+        if (JID.BareTextOf(from.ToString()) == _client!.BareJid.ToString())
             return;
 
         // Written before the display decides anything: /raw suppresses the line
@@ -2077,17 +2077,17 @@ class Program
         // The status text comes from the roster, which the connection has
         // already updated by the time this runs - the event itself carries only
         // the type.
-        _chatLog?.Presence(JidUtilities.Bare(from),
+        _chatLog?.Presence(JID.BareTextOf(from.ToString()),
                            DateTime.Now,
-                           GetShortJid(from),
+                           GetShortJid(JID.Parse(from.ToString())),
                            type,
-                           _client.Roster.GetItem(JidUtilities.Bare(from))?.PresenceStatus);
+                           _client.Roster.GetItem(JID.Parse(JID.BareTextOf(from.ToString())))?.PresenceStatus);
 
         if (_showRawXml) return; // in raw mode this is shown already
 
         using var scope = Output();
         Console.ForegroundColor = ConsoleColor.DarkGray;
-        Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {GetShortJid(from)} → {type}");
+        Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {GetShortJid(JID.Parse(from.ToString()))} → {type}");
         Console.ResetColor();
 
     }
@@ -2163,7 +2163,7 @@ class Program
 
     private static string BuildPrompt()
         => _client?.CurrentChatPartner != null
-               ? $"[{GetShortJid(_client.CurrentChatPartner)}] > "
+               ? $"[{GetShortJid(_client.CurrentChatPartner!.Value)}] > "
                : "> ";
 
     /// <summary>
@@ -2184,11 +2184,15 @@ class Program
 
     private static void WritePrompt() => _output?.WritePrompt();
 
-    private static string GetShortJid(string jid)
-    {
-        var slashIndex = jid.IndexOf('/');
-        return slashIndex > 0 ? jid[..slashIndex] : jid;
-    }
+    /// <summary>
+    /// The account without the device, for a line on screen.
+    /// </summary>
+    /// <remarks>
+    /// This used to cut the string at the first slash by hand. The address
+    /// knows where its own resourcepart ends, so it says so.
+    /// </remarks>
+    private static string GetShortJid(JID jid)
+        => jid.Bare.ToString();
 
     #endregion
 
