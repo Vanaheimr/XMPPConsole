@@ -127,7 +127,14 @@ class Program
 
         try
         {
-            _client = new XMPPClient(jid, password, wsUri, loggerFactory);
+            // The parse is here and no longer inside the client, and this is
+            // the one place in the whole tree where that boundary is a person:
+            // whatever came off the command line or out of the prompt below is
+            // text until it has been through RFC 7622. It stands inside the
+            // try, so a typo comes out as the same one-line "[!] Error: …" as
+            // an address that names no account - which is what somebody who
+            // mistyped their own JID should get, and not a stack trace.
+            _client = new XMPPClient(JID.Parse(jid), password, wsUri, loggerFactory);
 
             // Before ConnectAsync, and that is not a detail of order: the bound
             // is examined before the first <auth/> leaves the house, because
