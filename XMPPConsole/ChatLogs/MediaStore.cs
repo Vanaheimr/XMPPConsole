@@ -60,7 +60,9 @@ namespace org.GraphDefined.Vanaheimr.XMPPConsole.ChatLogs
         /// </summary>
         public const Int64 MaxBytes = 100L * 1024 * 1024;
 
-        /// <summary>How long one file may take altogether.</summary>
+        /// <summary>
+        /// How long one file may take altogether.
+        /// </summary>
         public static readonly TimeSpan Timeout = TimeSpan.FromMinutes(5);
 
         /// <summary>

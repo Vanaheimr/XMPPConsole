@@ -114,7 +114,9 @@ namespace org.GraphDefined.Vanaheimr.XMPPConsole.ConsoleUI
 
         }
 
-        /// <summary>Short form for a single line without colour.</summary>
+        /// <summary>
+        /// Short form for a single line without colour.
+        /// </summary>
         public void WriteLine(String line)
             => Write(w => w.WriteLine(line));
 
@@ -155,7 +157,9 @@ namespace org.GraphDefined.Vanaheimr.XMPPConsole.ConsoleUI
 
         }
 
-        /// <summary>The end of an output scope.</summary>
+        /// <summary>
+        /// The end of an output scope.
+        /// </summary>
         private sealed class Scope : IDisposable
         {
 

@@ -31,19 +31,29 @@ namespace org.GraphDefined.Vanaheimr.XMPPConsole.ChatLogs
     public enum ChatLogKind
     {
 
-        /// <summary>Something arrived.</summary>
+        /// <summary>
+        /// Something arrived.
+        /// </summary>
         Incoming,
 
-        /// <summary>Something was sent from here.</summary>
+        /// <summary>
+        /// Something was sent from here.
+        /// </summary>
         Outgoing,
 
-        /// <summary>A presence change of the far end.</summary>
+        /// <summary>
+        /// A presence change of the far end.
+        /// </summary>
         Presence,
 
-        /// <summary>The session itself: connected, lost, a contact request.</summary>
+        /// <summary>
+        /// The session itself: connected, lost, a contact request.
+        /// </summary>
         System,
 
-        /// <summary>A file was fetched, or was not.</summary>
+        /// <summary>
+        /// A file was fetched, or was not.
+        /// </summary>
         Media
 
     }
@@ -87,7 +97,9 @@ namespace org.GraphDefined.Vanaheimr.XMPPConsole.ChatLogs
 
         #region Properties
 
-        /// <summary>The directory everything is written under.</summary>
+        /// <summary>
+        /// The directory everything is written under.
+        /// </summary>
         public String Root => root;
 
         /// <summary>

@@ -119,7 +119,9 @@ namespace org.GraphDefined.Vanaheimr.XMPPConsole.ConsoleUI
         }
 
 
-        /// <summary>The level in four characters, as a console can bear it.</summary>
+        /// <summary>
+        /// The level in four characters, as a console can bear it.
+        /// </summary>
         internal static String Tag(LogLevel level)
             => level switch {
                    LogLevel.Trace        => "trce",

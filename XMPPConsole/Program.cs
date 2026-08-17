@@ -2057,7 +2057,9 @@ class Program
 
     }
 
-    /// <summary>The applications nobody has answered yet.</summary>
+    /// <summary>
+    /// The applications nobody has answered yet.
+    /// </summary>
     private static readonly List<PubSubSubscribeAuthorization> _pendingRequests = [];
 
     private static void HandlePresence(string from, string type)
@@ -2150,7 +2152,9 @@ class Program
     private static IDisposable Output()
         => _output?.Begin() ?? Nothing.Instance;
 
-    /// <summary>An output scope that does nothing.</summary>
+    /// <summary>
+    /// An output scope that does nothing.
+    /// </summary>
     private sealed class Nothing : IDisposable
     {
         internal static readonly Nothing Instance = new();
