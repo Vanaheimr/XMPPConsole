@@ -223,20 +223,25 @@ class Program
     private static void WireUpUserInterface(XMPPClient client)
     {
 
-        client.OnMessage           += HandleMessage;
-        client.OnCarbonMessage     += HandleCarbon;
-        client.OnChatState         += HandleChatState;
-        client.OnChatMarker        += HandleChatMarker;
-        client.OnReceiptReceived   += HandleReceipt;
-        client.OnPresenceChanged   += HandlePresence;
-        client.OnPubSubEvent       += HandlePubSubEvent;
-        client.OnPubSubSubscriptionRequest += HandlePubSubRequest;
-        client.OnError             += HandleError;
-        client.OnRawXml            += HandleRawXml;
+        // The handlers stay as they are: writing a line to a console is
+        // synchronous, and dressing it up as a Task would say otherwise. What
+        // the events now demand is a Task, so the adaptation happens here - in
+        // one place, where it can be seen - instead of turning ten display
+        // routines into something they are not.
+        client.OnMessage                   += (timestamp, sender, message,     ct) => { HandleMessage    (message);     return Task.CompletedTask; };
+        client.OnCarbonMessage             += (timestamp, sender, carbon,      ct) => { HandleCarbon     (carbon);      return Task.CompletedTask; };
+        client.OnChatState                 += (timestamp, sender, from, state, ct) => { HandleChatState  (from, state); return Task.CompletedTask; };
+        client.OnChatMarker                += (timestamp, sender, marker,      ct) => { HandleChatMarker (marker);      return Task.CompletedTask; };
+        client.OnReceiptReceived           += (timestamp, sender, from, id,    ct) => { HandleReceipt    (from, id);    return Task.CompletedTask; };
+        client.OnPresenceChanged           += (timestamp, sender, from, type,  ct) => { HandlePresence   (from, type);  return Task.CompletedTask; };
+        client.OnPubSubEvent               += (timestamp, sender, pubSubEvent, ct) => { HandlePubSubEvent(pubSubEvent); return Task.CompletedTask; };
+        client.OnPubSubSubscriptionRequest += (timestamp, sender, application, ct) => { HandlePubSubRequest(application); return Task.CompletedTask; };
+        client.OnError                     += (timestamp, sender, error,       ct) => { HandleError      (error);       return Task.CompletedTask; };
+        client.OnRawXml                    += (timestamp, sender, xml,         ct) => { HandleRawXml     (xml);         return Task.CompletedTask; };
 
-        client.OnSpoofingAttempt   += msg => WriteWarning($"⚠️ SPOOFING: {msg}");
+        client.OnSpoofingAttempt   += (timestamp, sender, msg, ct) => { WriteWarning($"⚠️ SPOOFING: {msg}"); return Task.CompletedTask; };
 
-        client.OnStateChanged += (oldState, newState) =>
+        client.OnStateChanged += (timestamp, sender, oldState, newState, ct) =>
         {
 
             switch (newState)
@@ -257,34 +262,49 @@ class Program
             // connected? - and this is the only place that answers it.
             _chatLog?.System(DateTime.Now, $"connection: {oldState} -> {newState}");
 
+
+            return Task.CompletedTask;
+
         };
 
-        client.OnCapsDiscovered += (from, info) =>
+        client.OnCapsDiscovered += (timestamp, sender, from, info, ct) =>
         {
             if (_showRawXml)
                 WriteSystemMessage($"[Caps] {from}: {string.Join(", ", info.Identities)}");
+
+            return Task.CompletedTask;
+
         };
 
         // These carry a JID, so they go to that conversation rather than to the
         // session log: whoever reads one contact's file wants to see there that
         // the contact was added, asked to be, or went away.
-        client.OnRosterItemAdded += item =>
+        client.OnRosterItemAdded += (timestamp, sender, item, ct) =>
         {
             WriteSystemMessage($"Contact added: {item.DisplayName}");
             _chatLog?.System(DateTime.Now, $"contact added: {item.DisplayName}", JidUtilities.Bare(item.Jid));
+
+            return Task.CompletedTask;
+
         };
 
-        client.OnRosterItemRemoved += jid =>
+        client.OnRosterItemRemoved += (timestamp, sender, jid, ct) =>
         {
             WriteSystemMessage($"Contact removed: {jid}");
             _chatLog?.System(DateTime.Now, "contact removed", JidUtilities.Bare(jid));
+
+            return Task.CompletedTask;
+
         };
 
-        client.OnSubscriptionRequest += (from, status) =>
+        client.OnSubscriptionRequest += (timestamp, sender, from, status, ct) =>
         {
             WriteSystemMessage($"📩 Contact request from {from}: {status}");
             WriteSystemMessage($"   Use /accept {from} or /deny {from}");
             _chatLog?.System(DateTime.Now, $"contact request: {status}", JidUtilities.Bare(from));
+
+            return Task.CompletedTask;
+
         };
 
     }
@@ -648,7 +668,7 @@ class Program
                 break;
 
             case "/to" or "/chat":
-                client.SetChatPartner(string.IsNullOrEmpty(args) ? null : args);
+                await client.SetChatPartnerAsync(string.IsNullOrEmpty(args) ? null : args);
                 Console.WriteLine(client.CurrentChatPartner == null
                                       ? "Chat recipient reset"
                                       : $"Chatting with: {client.CurrentChatPartner}");
