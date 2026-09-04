@@ -27,8 +27,8 @@
       since D97 it does not any more, and a package nobody uses is a claim
       about a dependency that does not exist.
     -->
-    <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.10" />
-    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.9" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.11" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.11" />
   </ItemGroup>
 
   <ItemGroup>
@@ -54,10 +54,8 @@
       and the conformance suite stops building; delete the submodules and a
       plain clone stops building.
     -->
-    <ProjectReference Include="..\libs\Ratatoskr\Ratatoskr\Ratatoskr.csproj"
-                      Condition="Exists('..\libs\Ratatoskr\Ratatoskr\Ratatoskr.csproj')" />
-    <ProjectReference Include="..\..\Ratatoskr\Ratatoskr\Ratatoskr.csproj"
-                      Condition="!Exists('..\libs\Ratatoskr\Ratatoskr\Ratatoskr.csproj')" />
+    <ProjectReference Include="..\libs\Ratatoskr\Ratatoskr\Ratatoskr.csproj" Condition="Exists('..\libs\Ratatoskr\Ratatoskr\Ratatoskr.csproj')" />
+    <ProjectReference Include="..\..\Ratatoskr\Ratatoskr\Ratatoskr.csproj" Condition="!Exists('..\libs\Ratatoskr\Ratatoskr\Ratatoskr.csproj')" />
   </ItemGroup>
 
 </Project>
