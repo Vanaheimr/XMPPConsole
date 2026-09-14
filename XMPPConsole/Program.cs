@@ -1074,13 +1074,24 @@ class Program
                     return;
                 }
 
-                var skipped = await client.SendEncryptedMessageAsync(JID.Parse(parts[1]), parts[2]);
+                var sent = await client.SendEncryptedMessageAsync(JID.Parse(parts[1]), parts[2]);
 
-                Console.WriteLine($"[→] encrypted to {parts[1]}");
+                // Readable is kept apart from an empty Skipped on purpose, and
+                // the line above used to collapse the two. One device of four
+                // missing is a message that arrived; none of three is a message
+                // that went out and nobody can open - which is what writing to
+                // somebody who does not do OMEMO at all looks like. Reporting
+                // the second as a send is the one error this return value
+                // exists to make impossible.
+                if (sent.Readable)
+                    Console.WriteLine($"[→] encrypted to {parts[1]}");
+                else
+                    Console.WriteLine($"[!] encrypted to {parts[1]}, but NO device of theirs " +
+                                      $"can read it.");
 
                 // Whoever cannot read along is named. A sender who does not
                 // learn of it takes their conversation for held.
-                foreach (var u in skipped)
+                foreach (var u in sent.Skipped)
                     Console.WriteLine($"    ✗ {u.Jid}/{u.DeviceId}: {u.Reason}");
 
                 return;
