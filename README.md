@@ -550,7 +550,31 @@ over another channel, never over the one you are securing. `/omemo trust` and
 marked `?`.
 
 When an encrypted message cannot reach a device, the console names it and says
-why — a sender who does not learn of it takes their conversation for held.
+why — a sender who does not learn of it takes their conversation for held. And
+it keeps two cases apart that look alike: one device of four missing is a
+message that arrived, **none of three is a message that went out and nobody can
+open**. The second is what writing to somebody who does not do OMEMO at all
+looks like, and it gets a line of its own rather than the arrow that means sent.
+
+**A device that has written before and turns up with a different identity key
+gets its message refused, and the console says so** — naming the fingerprint on
+file beside the one just offered. That is the whole of what blind trust buys:
+the first message is given away against the promise that a change afterwards is
+noticed, and this is the promise. Until recently it was not kept here. The
+library detected the case correctly and raised an event, nothing in the console
+listened, and the contact simply stopped arriving with no line anywhere saying
+why — which is indistinguishable from the far side having gone quiet.
+
+There is **no way to accept a new key** here and no command for it. A new
+installation and somebody pushing in between look exactly alike from this end,
+so whoever wants the device back deletes the store and loses every other
+comparison with it. That price is the honest one; a one-key override would look
+cheaper and be worth less.
+
+What the console does *not* show is which device an incoming encrypted message
+came from, or whether that device is confirmed: it listens on the plain message
+event, which carries the text and not the rating. The message arrives, and
+nothing marks it as having been encrypted at all.
 
 ## Security notes
 

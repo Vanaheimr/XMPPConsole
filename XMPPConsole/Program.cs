@@ -246,6 +246,7 @@ class Program
         client.OnPresenceChanged           += (timestamp, sender, from, type,  ct) => { HandlePresence   (from, type);  return Task.CompletedTask; };
         client.OnPubSubEvent               += (timestamp, sender, pubSubEvent, ct) => { HandlePubSubEvent(pubSubEvent); return Task.CompletedTask; };
         client.OnPubSubSubscriptionRequest += (timestamp, sender, application, ct) => { HandlePubSubRequest(application); return Task.CompletedTask; };
+        client.OnOmemoIdentityChanged      += (timestamp, sender, change,      ct) => { HandleIdentityChanged(change);  return Task.CompletedTask; };
         client.OnError                     += (timestamp, sender, error,       ct) => { HandleError      (error);       return Task.CompletedTask; };
         client.OnRawXml                    += (timestamp, sender, xml,         ct) => { HandleRawXml     (xml);         return Task.CompletedTask; };
 
@@ -1946,6 +1947,51 @@ class Program
             Console.WriteLine($"⏸️ {shortFrom} has stopped typing");
             Console.ResetColor();
         }
+
+    }
+
+    /// <summary>
+    /// XEP-0384: a device that has written here before reports with a different
+    /// identity key. Its message was refused, and this is the only place that
+    /// says so.
+    /// </summary>
+    /// <remarks>
+    /// <b>This is what blind trust was paid for.</b> Trusting a new device
+    /// without a comparison - the default, and the only trust model that gets
+    /// used - buys the first message against one promise: that a change
+    /// afterwards is noticed. Until now this console took that trade and did not
+    /// pay it. The event existed on the client, nothing listened, and a contact
+    /// who had reinstalled simply stopped arriving, with no line anywhere saying
+    /// why. A new installation and somebody pushing in between look exactly the
+    /// same from here, which is why the message is refused and not merely
+    /// marked - but a refusal nobody is told about is indistinguishable from the
+    /// far side having gone quiet.
+    ///
+    /// Both fingerprints are printed, and in that order: the one on file is the
+    /// one somebody may have compared over another channel, and it is what makes
+    /// the second line worth reading at all.
+    ///
+    /// There is no way to accept the new key here, and no command for it either.
+    /// Whoever wants the device back deletes the store, which loses every other
+    /// comparison with it - that price is the honest one, and a one-key
+    /// override that looks cheap would be the dishonest version of it.
+    /// </remarks>
+    private static void HandleIdentityChanged(OmemoIdentityChanged change)
+    {
+
+        using var scope = Output();
+
+        Console.ForegroundColor = ConsoleColor.Red;
+        Console.WriteLine($"[!] ⚠️ OMEMO: {GetShortJid(change.Jid)}/{change.DeviceId} reports with a " +
+                          $"DIFFERENT identity key - its message was refused.");
+        Console.ResetColor();
+
+        Console.ForegroundColor = ConsoleColor.DarkGray;
+        Console.WriteLine($"      on file: {Grouped(change.KnownFingerprint)}");
+        Console.WriteLine($"      offered: {Grouped(change.OfferedFingerprint)}");
+        Console.WriteLine( "      A new installation looks the same as somebody in between. Ask over");
+        Console.WriteLine( "      another channel which it was; there is no way to accept it here.");
+        Console.ResetColor();
 
     }
 
