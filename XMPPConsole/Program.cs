@@ -250,6 +250,15 @@ class Program
         // one place, where it can be seen - instead of turning ten display
         // routines into something they are not.
         client.OnMessage                   += (timestamp, sender, message,     ct) => { HandleMessage    (message);     return Task.CompletedTask; };
+
+        // XEP-0045: what happens in a room. Dimmed, because none of it is
+        // somebody saying something - and left out entirely would make a room
+        // a list of messages from names that appear from nowhere.
+        client.OnOccupantJoined            += (timestamp, sender, room, occupant, why, ct) => { RoomNote(room, $"{occupant.Nick} is here"); return Task.CompletedTask; };
+        client.OnOccupantLeft              += (timestamp, sender, room, occupant, why, ct) => { RoomNote(room, $"{occupant.Nick} has gone"); return Task.CompletedTask; };
+        client.OnOccupantRenamed           += (timestamp, sender, room, oldNick, newNick, isSelf, ct) => { RoomNote(room, $"{oldNick} is now {newNick}"); return Task.CompletedTask; };
+        client.OnRoomSubject               += (timestamp, sender, room, subject, by, ct) => { RoomNote(room, subject.Length == 0 ? "the subject was removed" : $"subject: {subject}"); return Task.CompletedTask; };
+        client.OnRoomLeft                  += (timestamp, sender, room, why,      ct) => { HandleRoomLeft(room, why); return Task.CompletedTask; };
         client.OnCarbonMessage             += (timestamp, sender, carbon,      ct) => { HandleCarbon     (carbon);      return Task.CompletedTask; };
         client.OnChatState                 += (timestamp, sender, from, state, ct) => { HandleChatState  (from, state); return Task.CompletedTask; };
         client.OnChatMarker                += (timestamp, sender, marker,      ct) => { HandleChatMarker (marker);      return Task.CompletedTask; };
@@ -654,7 +663,17 @@ class Program
             }
             else
             {
-                var messageId = await _client!.SendMessageAsync(input);
+                // XEP-0045: when the current partner is a room, an ordinary
+                // line belongs in it - as groupchat, which is what makes the
+                // service hand it to everybody rather than to one occupant.
+                var room = _client!.CurrentChatPartner is JID partner
+                               ? _client.Room(partner)
+                               : null;
+
+                var messageId = room is not null
+                                    ? await _client.SendRoomMessageAsync(room.Address, input)
+                                    : await _client.SendMessageAsync(input);
+
                 if (messageId == null)
                     Console.WriteLine("No recipient set. Use /msg <jid> <message> or /to <jid>");
                 else
@@ -740,6 +759,27 @@ class Program
             // about.
             case "/re" or "/reply":
                 await ProcessReplyCommandAsync(args);
+                break;
+
+            // XEP-0045: rooms.
+            case "/join" or "/j":
+                await ProcessJoinCommandAsync(args);
+                break;
+
+            case "/part" or "/leave":
+                await ProcessPartCommandAsync(args);
+                break;
+
+            case "/rooms":
+                ShowRooms();
+                break;
+
+            case "/nick":
+                await ProcessNickCommandAsync(args);
+                break;
+
+            case "/topic" or "/subject":
+                await ProcessTopicCommandAsync(args);
                 break;
 
             case "/status" or "/s":
@@ -974,6 +1014,201 @@ class Program
                    : line[..57] + "...";
 
     }
+
+    #region XEP-0045: rooms
+
+    /// <summary>
+    /// The room the typed line would go to, or null.
+    /// </summary>
+    private static MucRoom? CurrentRoom
+        => _client?.CurrentChatPartner is JID partner
+               ? _client.Room(partner)
+               : null;
+
+    /// <summary>
+    /// XEP-0045: enters a room and makes it the current conversation.
+    /// </summary>
+    /// <remarks>
+    /// <b>The room is unlocked when it turns out to be new.</b> A room that a
+    /// join brought into being is locked until its owner configures it, and
+    /// nobody else can enter in the meantime - so leaving that step out gives
+    /// somebody a room only they can see, with nothing anywhere saying so.
+    /// </remarks>
+    private static async Task ProcessJoinCommandAsync(String args)
+    {
+
+        var client = _client;
+
+        if (client is null)
+            return;
+
+        var parts = args.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+
+        if (parts.Length == 0)
+        {
+            Console.WriteLine("Syntax: /join <room@service> [nick]");
+            return;
+        }
+
+        if (!JID.TryParse(parts[0], out var room))
+        {
+            Console.WriteLine($"'{parts[0]}' is not an address.");
+            return;
+        }
+
+        var nick     = parts.Length > 1 ? parts[1] : client.BareJid.Localpart ?? "guest";
+        var outcome  = await client.JoinRoomAsync(room, nick);
+
+        if (outcome.TimedOut)
+        {
+            Console.WriteLine($"{GetShortJid(room)} did not answer.");
+            return;
+        }
+
+        if (!outcome.Joined)
+        {
+
+            // The condition is the whole of what a person can act on: a taken
+            // nickname is worth trying again with another, a ban is not.
+            Console.WriteLine(outcome.Refusal!.Condition switch {
+                "conflict"               => $"The name '{nick}' is taken in there. Try /join {parts[0]} <other>",
+                "not-authorized"         => "That room wants a password, and this console cannot send one yet.",
+                "registration-required"  => "That room is members-only.",
+                "forbidden"              => "You are banned from that room.",
+                _                        => $"The room refused: {outcome.Refusal}"
+            });
+
+            return;
+
+        }
+
+        var joined = outcome.Room!;
+
+        if (joined.WasCreated && !await client.CreateInstantRoomAsync(joined.Address))
+            Console.WriteLine("  The room is new and stayed locked - nobody else can enter it.");
+
+        await client.SetChatPartnerAsync(joined.Address);
+
+        Console.ForegroundColor = ConsoleColor.Cyan;
+        Console.WriteLine($"  → In {GetShortJid(joined.Address)} as '{joined.Nick}'" +
+                          (joined.WasCreated ? " (new room)" : "") +
+                          $", {joined.Occupants.Count} present" +
+                          (joined.IsNonAnonymous ? " - this room shows everybody's real address" : ""));
+        Console.ResetColor();
+
+    }
+
+    /// <summary>
+    /// XEP-0045: leaves the current room.
+    /// </summary>
+    private static async Task ProcessPartCommandAsync(String args)
+    {
+
+        var room = CurrentRoom;
+
+        if (room is null)
+        {
+            Console.WriteLine("This conversation is not a room. /rooms shows which are.");
+            return;
+        }
+
+        await _client!.LeaveRoomAsync(room.Address, args.Length > 0 ? args : null);
+        await _client.SetChatPartnerAsync(null);
+
+        Console.WriteLine($"  Left {GetShortJid(room.Address)}");
+
+    }
+
+    /// <summary>
+    /// The rooms and who is in them.
+    /// </summary>
+    private static void ShowRooms()
+    {
+
+        var rooms = _client?.Rooms;
+
+        if (rooms is null || rooms.Count == 0)
+        {
+            Console.WriteLine("In no room. /join <room@service> [nick]");
+            return;
+        }
+
+        foreach (var room in rooms.Values)
+        {
+
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.WriteLine($"{GetShortJid(room.Address)}  as '{room.Nick}'  ({room.State})");
+            Console.ResetColor();
+
+            if (room.Subject is not null)
+                Console.WriteLine($"  Subject: {room.Subject}");
+
+            foreach (var occupant in room.Occupants.Values.OrderBy(o => o.Nick, StringComparer.Ordinal))
+                Console.WriteLine($"  {(occupant.Nick == room.Nick ? "*" : " ")} {occupant.Nick,-20} " +
+                                  $"{occupant.Affiliation.AsText(),-8} {occupant.Role.AsText()}" +
+
+                                  // Usually there is none: a room is
+                                  // semi-anonymous by default and tells nobody
+                                  // who anybody really is.
+                                  (occupant.RealJid is not null ? $"  {occupant.RealJid}" : ""));
+
+        }
+
+    }
+
+    /// <summary>
+    /// XEP-0045: takes a different name in the current room.
+    /// </summary>
+    private static async Task ProcessNickCommandAsync(String args)
+    {
+
+        var room = CurrentRoom;
+
+        if (room is null)
+        {
+            Console.WriteLine("This conversation is not a room.");
+            return;
+        }
+
+        if (args.Length == 0)
+        {
+            Console.WriteLine($"In {GetShortJid(room.Address)} you are '{room.Nick}'. Syntax: /nick <name>");
+            return;
+        }
+
+        // Whether it works is the room's decision, and the answer arrives as a
+        // presence rather than as a result - so nothing is reported here.
+        await _client!.ChangeRoomNickAsync(room.Address, args);
+
+    }
+
+    /// <summary>
+    /// XEP-0045: sets the subject of the current room.
+    /// </summary>
+    private static async Task ProcessTopicCommandAsync(String args)
+    {
+
+        var room = CurrentRoom;
+
+        if (room is null)
+        {
+            Console.WriteLine("This conversation is not a room.");
+            return;
+        }
+
+        if (args.Length == 0)
+        {
+            Console.WriteLine(room.Subject is null
+                                  ? "That room has no subject."
+                                  : $"Subject: {room.Subject}");
+            return;
+        }
+
+        await _client!.SetRoomSubjectAsync(room.Address, args);
+
+    }
+
+    #endregion
 
     private static async Task ProcessStatusCommandAsync(string args)
     {
@@ -2032,6 +2267,52 @@ class Program
 
 
     /// <summary>
+    /// A line about a room rather than from somebody in it.
+    /// </summary>
+    private static void RoomNote(MucRoom room, String what)
+    {
+
+        using var scope = Output();
+
+        Console.ForegroundColor = ConsoleColor.DarkGray;
+        Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {GetShortJid(room.Address)}: {what}");
+        Console.ResetColor();
+
+    }
+
+    /// <summary>
+    /// XEP-0045: out of a room - and the status codes say whether that was our
+    /// own doing.
+    /// </summary>
+    /// <remarks>
+    /// <b>Four different things arrive as the same stanza</b>, and the numbers
+    /// are the only thing that tells them apart. Reported as "you have left the
+    /// room" they all read the same, and the one thing a person needs - whether
+    /// coming back is worth trying - is the one thing that would be dropped.
+    /// </remarks>
+    private static void HandleRoomLeft(MucRoom room, MucUserInfo? why)
+    {
+
+        using var scope = Output();
+
+        var what = why switch {
+            null                                     => "left",
+            _ when why.Has(MucStatus.Banned)         => "banned from",
+            _ when why.Has(MucStatus.Kicked)         => "kicked out of",
+            _ when why.Has(MucStatus.MembersOnly)    => "removed from (members only now)",
+            _ when why.Has(MucStatus.Shutdown)       => "removed from (the service is shutting down)",
+            _                                        => "left"
+        };
+
+        Console.ForegroundColor = what == "left" ? ConsoleColor.DarkGray : ConsoleColor.DarkYellow;
+        Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {what} {GetShortJid(room.Address)}" +
+                          (why?.Reason is not null ? $" - {why.Reason}" : "") +
+                          (why?.Actor  is not null ? $" (by {why.Actor})" : ""));
+        Console.ResetColor();
+
+    }
+
+    /// <summary>
     /// What a message is besides its text - or null when it is nothing else.
     /// </summary>
     private static string? NoteFor(XMPPMessage Message)
@@ -2414,6 +2695,10 @@ Messages:
   /msg <jid> <text>  send a single message
   /fix <text>        correct the last message (XEP-0308)
   /re <text>         answer the last message received (XEP-0461)
+  /join <room> [nick]  enter a room, /part leaves it (XEP-0045)
+  /rooms             the rooms and who is in them
+  /nick <name>       a different name in this room
+  /topic [text]      the subject of this room
   /status [show] [text]  change the status (available/away/chat/dnd/xa)
 
 Contacts (roster):

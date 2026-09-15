@@ -101,6 +101,7 @@ from this console:
 | XEP-0203 | Delayed delivery — late messages carry their original date |
 | XEP-0280 | Message Carbons, with spoofing protection |
 | XEP-0308 | Last message correction (`/fix`) |
+| XEP-0045 | Multi-user chat (`/join`, `/part`, `/rooms`, `/nick`, `/topic`) |
 | XEP-0359 | Stable stanza IDs — read, to know which name a reply may point at |
 | XEP-0426 / XEP-0428 / XEP-0461 | Message replies (`/re`), with the quoted lines marked as the duplicate they are |
 | XEP-0352 | Client State Indication (`/csi`) |
@@ -355,6 +356,11 @@ current conversation partner. Everything else is a command.
 /msg <jid> <text>         send a single message (alias: /m)
 /fix <text>               correct the last message to this partner (alias: /corr)
 /re <text>                answer the last message from this partner (alias: /reply)
+/join <room> [nick]       enter a room and make it the conversation (alias: /j)
+/part [reason]            leave the current room (alias: /leave)
+/rooms                    the rooms, their subjects and who is in them
+/nick <name>              a different name in the current room
+/topic [text]             the subject of the current room (alias: /subject)
 /status [show] [text]     set the status: available|away|chat|dnd|xa (alias: /s)
 ```
 
@@ -378,6 +384,36 @@ The quotation is dimmed and the answer is not, because only one of the two was
 written just now. What is quoted when *sending* is the other side's text
 without **its** quotation — otherwise every turn would add a layer of `>` and
 after four exchanges the message would be mostly other people's words.
+
+### Rooms
+
+`/join chat@conference.example achim` enters a room and makes it the current
+conversation, so an ordinary typed line goes into it. A room that did not exist
+is created by entering it — and is then **locked** until its owner configures
+it, so `/join` does that straight away; without it you would have a room only
+you can see, with nothing anywhere saying so.
+
+`/rooms` lists who is in them with affiliation and role. The real address is
+usually missing, and that is not a gap: a room is semi-anonymous by default and
+tells nobody who anybody is. When it is not — `/join` says so.
+
+What happens in a room is shown dimmed, because none of it is somebody saying
+something. Being thrown out is not:
+
+```
+[21:14:32] chat@conference: bob is here
+[21:14:40] chat@conference: subject: deployment on Friday
+[21:15:02] kicked out of chat@conference - enough of that (by alice@example)
+```
+
+Leaving, being kicked, being banned and the service shutting down all arrive as
+the same stanza, and the status codes are the only thing that tells them apart.
+Reported as "you have left the room" they read identically — and the one thing
+worth knowing, whether coming back is worth trying, would be the part dropped.
+
+Not here: configuring a room, kicking, banning, granting voice, invitations, and
+a password for a protected room. `/join` says which of those a refusal was
+about.
 
 Two limits worth knowing. There is no `/re` for a particular older message:
 only the last one that arrived can be answered, because that is all a console
