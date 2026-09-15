@@ -75,6 +75,16 @@ class Program
     /// </remarks>
     private static readonly Dictionary<String, XMPPMessage> _lastFrom = [];
 
+    /// <summary>
+    /// XEP-0045: invitations that have arrived and not been answered.
+    /// </summary>
+    /// <remarks>
+    /// Kept because a refusal has to be addressed to whoever asked, and by the
+    /// time somebody types <c>/decline</c> the stanza that said so is long
+    /// gone. Keyed by the room, because that is what a person will name.
+    /// </remarks>
+    private static readonly Dictionary<String, MucInvitation> _invitations = [];
+
     #endregion
 
     static async Task Main(string[] args)
@@ -259,6 +269,13 @@ class Program
         client.OnOccupantRenamed           += (timestamp, sender, room, oldNick, newNick, isSelf, ct) => { RoomNote(room, $"{oldNick} is now {newNick}"); return Task.CompletedTask; };
         client.OnRoomSubject               += (timestamp, sender, room, subject, by, ct) => { RoomNote(room, subject.Length == 0 ? "the subject was removed" : $"subject: {subject}"); return Task.CompletedTask; };
         client.OnRoomLeft                  += (timestamp, sender, room, why,      ct) => { HandleRoomLeft(room, why); return Task.CompletedTask; };
+
+        // XEP-0045, section 7.8: the only thing a room says about a room one is
+        // not in - and therefore the only way to learn that a room exists at
+        // all. An interface that does not show it drops the invitation without
+        // anything looking wrong.
+        client.OnRoomInvitation            += (timestamp, sender, invitation, ct) => { HandleInvitation(invitation); return Task.CompletedTask; };
+        client.OnInvitationDeclined        += (timestamp, sender, declined,   ct) => { HandleDecline(declined);      return Task.CompletedTask; };
         client.OnCarbonMessage             += (timestamp, sender, carbon,      ct) => { HandleCarbon     (carbon);      return Task.CompletedTask; };
         client.OnChatState                 += (timestamp, sender, from, state, ct) => { HandleChatState  (from, state); return Task.CompletedTask; };
         client.OnChatMarker                += (timestamp, sender, marker,      ct) => { HandleChatMarker (marker);      return Task.CompletedTask; };
@@ -782,6 +799,26 @@ class Program
                 await ProcessTopicCommandAsync(args);
                 break;
 
+            case "/invite":
+                await ProcessInviteCommandAsync(args);
+                break;
+
+            case "/decline":
+                await ProcessDeclineCommandAsync(args);
+                break;
+
+            case "/kick":
+                await ProcessKickCommandAsync(args);
+                break;
+
+            case "/ban":
+                await ProcessBanCommandAsync(args);
+                break;
+
+            case "/voice":
+                await ProcessVoiceCommandAsync(args);
+                break;
+
             case "/status" or "/s":
                 await ProcessStatusCommandAsync(args);
                 break;
@@ -1207,6 +1244,223 @@ class Program
         await _client!.SetRoomSubjectAsync(room.Address, args);
 
     }
+
+    /// <summary>
+    /// XEP-0045, section 7.8.1: asks somebody into the current room.
+    /// </summary>
+    private static async Task ProcessInviteCommandAsync(String args)
+    {
+
+        var room = CurrentRoom;
+
+        if (room is null)
+        {
+            Console.WriteLine("This conversation is not a room.");
+            return;
+        }
+
+        var parts = args.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+
+        if (parts.Length == 0 || !JID.TryParse(parts[0], out var who))
+        {
+            Console.WriteLine("Syntax: /invite <jid> [reason]");
+            return;
+        }
+
+        await _client!.InviteToRoomAsync(room.Address, who,
+                                         parts.Length > 1 ? parts[1] : null);
+
+        Console.WriteLine($"  Asked {GetShortJid(who)} into {GetShortJid(room.Address)}");
+
+    }
+
+    /// <summary>
+    /// XEP-0045, section 7.8.2: says no to an invitation that arrived.
+    /// </summary>
+    /// <remarks>
+    /// Addressed to whoever asked and sent through the room - which is why the
+    /// invitation had to be kept: the address to answer is in it and nowhere
+    /// else.
+    /// </remarks>
+    private static async Task ProcessDeclineCommandAsync(String args)
+    {
+
+        var parts = args.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+
+        if (parts.Length == 0)
+        {
+
+            Console.WriteLine(_invitations.Count == 0
+                                  ? "No invitation is waiting."
+                                  : "Syntax: /decline <room> [reason]");
+
+            lock (_invitations)
+                foreach (var waiting in _invitations.Values)
+                    Console.WriteLine($"  {GetShortJid(waiting.Room)}  from {NameOf(waiting)}");
+
+            return;
+
+        }
+
+        MucInvitation? invitation;
+
+        lock (_invitations)
+            _invitations.TryGetValue(JID.TryParse(parts[0], out var named)
+                                         ? named.Bare.ToString()
+                                         : parts[0],
+                                     out invitation);
+
+        if (invitation is null)
+        {
+            Console.WriteLine($"No invitation from {parts[0]} is waiting.");
+            return;
+        }
+
+        await _client!.DeclineInvitationAsync(invitation.Room, invitation.From,
+                                              parts.Length > 1 ? parts[1] : null);
+
+        lock (_invitations)
+            _invitations.Remove(invitation.Room.ToString());
+
+        Console.WriteLine($"  Declined {GetShortJid(invitation.Room)}");
+
+    }
+
+    /// <summary>
+    /// XEP-0045, section 9.2: throws somebody out for this visit.
+    /// </summary>
+    private static async Task ProcessKickCommandAsync(String args)
+    {
+
+        var room = CurrentRoom;
+
+        if (room is null)
+        {
+            Console.WriteLine("This conversation is not a room.");
+            return;
+        }
+
+        var parts = args.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+
+        if (parts.Length == 0)
+        {
+            Console.WriteLine("Syntax: /kick <nick> [reason]");
+            return;
+        }
+
+        var done = await _client!.KickFromRoomAsync(room.Address, parts[0],
+                                                    parts.Length > 1 ? parts[1] : null);
+
+        // Not being a moderator is the ordinary case, not an exception - and a
+        // console that reports success for a refusal leaves somebody standing
+        // in the room while the screen says otherwise.
+        Console.WriteLine(done
+                              ? $"  Kicked {parts[0]} out of {GetShortJid(room.Address)}"
+                              : $"  {room.Address} refused. Moderators may kick; " +
+                                $"here you are {room.Me?.Role.AsText() ?? "nothing"}.");
+
+    }
+
+    /// <summary>
+    /// XEP-0045, section 9.1: keeps somebody out for good.
+    /// </summary>
+    /// <remarks>
+    /// <b>Takes a nickname and needs an address.</b> A ban names the real
+    /// address, because an affiliation outlives the visit and a nickname
+    /// identifies nobody outside it - but a person watching a room knows
+    /// nicknames and nothing else. So the nickname is looked up, and when the
+    /// room never gave the address the answer says exactly that rather than
+    /// "refused": it is not a permission that is missing, it is a name.
+    /// </remarks>
+    private static async Task ProcessBanCommandAsync(String args)
+    {
+
+        var room = CurrentRoom;
+
+        if (room is null)
+        {
+            Console.WriteLine("This conversation is not a room.");
+            return;
+        }
+
+        var parts = args.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+
+        if (parts.Length == 0)
+        {
+            Console.WriteLine("Syntax: /ban <nick> [reason]");
+            return;
+        }
+
+        if (!room.Occupants.TryGetValue(parts[0], out var occupant))
+        {
+            Console.WriteLine($"Nobody called '{parts[0]}' is in {GetShortJid(room.Address)}.");
+            return;
+        }
+
+        if (occupant.RealJid is null)
+        {
+            Console.WriteLine($"This room does not say who '{parts[0]}' really is, and a ban has " +
+                              "to name somebody who exists outside it. /kick works.");
+            return;
+        }
+
+        var done = await _client!.BanFromRoomAsync(room.Address, occupant.RealJid.Value,
+                                                   parts.Length > 1 ? parts[1] : null);
+
+        Console.WriteLine(done
+                              ? $"  Banned {parts[0]} ({occupant.RealJid}) from {GetShortJid(room.Address)}"
+                              : $"  {room.Address} refused. Admins may ban; " +
+                                $"here you are {room.Me?.Affiliation.AsText() ?? "nothing"}.");
+
+    }
+
+    /// <summary>
+    /// XEP-0045, section 8.3 and 8.4: gives somebody the voice in a moderated
+    /// room, or takes it away.
+    /// </summary>
+    private static async Task ProcessVoiceCommandAsync(String args)
+    {
+
+        var room = CurrentRoom;
+
+        if (room is null)
+        {
+            Console.WriteLine("This conversation is not a room.");
+            return;
+        }
+
+        var parts = args.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+
+        if (parts.Length < 2 || parts[1] is not ("on" or "off"))
+        {
+            Console.WriteLine("Syntax: /voice <nick> on|off");
+            return;
+        }
+
+        var role = parts[1] == "on" ? MucRole.Participant : MucRole.Visitor;
+        var done = await _client!.SetRoomRoleAsync(room.Address, parts[0], role);
+
+        Console.WriteLine(done
+                              ? $"  {parts[0]} is now {role.AsText()}"
+                              : $"  {room.Address} refused.");
+
+    }
+
+    /// <summary>
+    /// What to call whoever sent an invitation.
+    /// </summary>
+    /// <remarks>
+    /// <b>One of two shapes, and both were measured on real services.</b>
+    /// ejabberd names the inviter by their real address, as the specification's
+    /// example does; Prosody by their address in the room, which says who asked
+    /// without saying who that is. Printing the second one whole would show a
+    /// room where a person belongs.
+    /// </remarks>
+    private static String NameOf(MucInvitation Invitation)
+
+        => Invitation.FromAnOccupantAddress
+               ? $"{Invitation.From.Resourcepart} (in the room)"
+               : GetShortJid(Invitation.From.Bare);
 
     #endregion
 
@@ -2267,6 +2521,59 @@ class Program
 
 
     /// <summary>
+    /// XEP-0045: somebody wants us in a room.
+    /// </summary>
+    /// <remarks>
+    /// Kept as well as shown: a refusal has to be addressed to whoever asked,
+    /// and by the time anybody types <c>/decline</c> the stanza is gone.
+    /// </remarks>
+    private static void HandleInvitation(MucInvitation Invitation)
+    {
+
+        lock (_invitations)
+            _invitations[Invitation.Room.ToString()] = Invitation;
+
+        using var scope = Output();
+
+        Console.ForegroundColor = ConsoleColor.Cyan;
+        Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {NameOf(Invitation)} asks you into " +
+                          GetShortJid(Invitation.Room) +
+                          (Invitation.Reason is not null ? $": {Invitation.Reason}" : ""));
+        Console.ResetColor();
+
+        Console.ForegroundColor = ConsoleColor.DarkGray;
+
+        Console.WriteLine(Invitation.Password is not null
+
+                              // Without it an invitation into a protected room
+                              // is one nobody can act on - so it is passed on
+                              // rather than swallowed.
+                              ? $"           /join {Invitation.Room} - the room wants the password " +
+                                $"'{Invitation.Password}', which this console cannot send yet"
+
+                              : $"           /join {Invitation.Room}   or   /decline {Invitation.Room}");
+
+        Console.ResetColor();
+
+    }
+
+    /// <summary>
+    /// XEP-0045: somebody we asked is not coming.
+    /// </summary>
+    private static void HandleDecline(MucDecline Declined)
+    {
+
+        using var scope = Output();
+
+        Console.ForegroundColor = ConsoleColor.DarkGray;
+        Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {GetShortJid(Declined.From.Bare)} is not coming to " +
+                          GetShortJid(Declined.Room) +
+                          (Declined.Reason is not null ? $": {Declined.Reason}" : ""));
+        Console.ResetColor();
+
+    }
+
+    /// <summary>
     /// A line about a room rather than from somebody in it.
     /// </summary>
     private static void RoomNote(MucRoom room, String what)
@@ -2699,6 +3006,11 @@ Messages:
   /rooms             the rooms and who is in them
   /nick <name>       a different name in this room
   /topic [text]      the subject of this room
+  /invite <jid> [reason]   ask somebody into this room
+  /decline <room> [reason] say no to an invitation that arrived
+  /kick <nick> [reason]    throw somebody out for this visit
+  /ban <nick> [reason]     keep somebody out for good
+  /voice <nick> on|off     the voice in a moderated room
   /status [show] [text]  change the status (available/away/chat/dnd/xa)
 
 Contacts (roster):

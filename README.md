@@ -361,6 +361,11 @@ current conversation partner. Everything else is a command.
 /rooms                    the rooms, their subjects and who is in them
 /nick <name>              a different name in the current room
 /topic [text]             the subject of the current room (alias: /subject)
+/invite <jid> [reason]    ask somebody into the current room
+/decline <room> [reason]  say no to an invitation that arrived
+/kick <nick> [reason]     throw somebody out of the room for this visit
+/ban <nick> [reason]      keep somebody out of the room for good
+/voice <nick> on|off      the voice in a moderated room
 /status [show] [text]     set the status: available|away|chat|dnd|xa (alias: /s)
 ```
 
@@ -411,9 +416,43 @@ the same stanza, and the status codes are the only thing that tells them apart.
 Reported as "you have left the room" they read identically — and the one thing
 worth knowing, whether coming back is worth trying, would be the part dropped.
 
-Not here: configuring a room, kicking, banning, granting voice, invitations, and
-a password for a protected room. `/join` says which of those a refusal was
-about.
+### Being asked in, and throwing somebody out
+
+An invitation is the only thing a room says about a room you are **not** in —
+and therefore the only way to hear that one exists:
+
+```
+[21:14:32] alice asks you into chat@conference: come along
+           /join chat@conference   or   /decline chat@conference
+```
+
+The invitation is kept, because a refusal has to be addressed to whoever asked
+and by then the stanza is gone. Who that is comes back in one of two shapes,
+and both real services were measured doing a different one — ejabberd names the
+inviter's real address, Prosody their address in the room. The second says who
+asked without saying who that is, which for a semi-anonymous room is the more
+careful answer; the console prints `alice (in the room)` for it rather than a
+room address where a person belongs.
+
+`/kick <nick>` and `/ban <nick>` both take a nickname, and only one of them can
+keep it:
+
+```
+> /ban bob
+This room does not say who 'bob' really is, and a ban has to name somebody who
+exists outside it. /kick works.
+```
+
+A kick takes away a **role**, which lasts only for the visit, so a nickname
+names somebody. A ban sets an **affiliation**, which outlives the visit, so it
+has to name somebody who exists outside it — and a semi-anonymous room gives
+real addresses to moderators only. The console looks the nickname up and says
+which of the two it is: a missing name, or a missing permission. They are
+different problems and only one of them is yours.
+
+Not here: configuring a room, destroying one, and a password for a protected
+room — an invitation that carries one says so instead of failing silently.
+`/join` says which of those a refusal was about.
 
 Two limits worth knowing. There is no `/re` for a particular older message:
 only the last one that arrived can be answered, because that is all a console
