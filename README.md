@@ -56,7 +56,9 @@ presentation.
 - **Chat.** Set a conversation partner with `/to`, then type — every line
   without a leading `/` goes out as a message. Single messages without
   switching partner go with `/msg`. A message already sent is corrected with
-  `/fix` (XEP-0308).
+  `/fix` (XEP-0308), and a message that arrived is answered with `/re`
+  (XEP-0461) — which is not the same as simply writing back, because the answer
+  names the message it is about.
 - **Roster.** List, filter, add and remove contacts, see who is online, read
   the details of a single contact, and accept or deny incoming contact
   requests.
@@ -99,6 +101,8 @@ from this console:
 | XEP-0203 | Delayed delivery — late messages carry their original date |
 | XEP-0280 | Message Carbons, with spoofing protection |
 | XEP-0308 | Last message correction (`/fix`) |
+| XEP-0359 | Stable stanza IDs — read, to know which name a reply may point at |
+| XEP-0426 / XEP-0428 / XEP-0461 | Message replies (`/re`), with the quoted lines marked as the duplicate they are |
 | XEP-0352 | Client State Indication (`/csi`) |
 | XEP-0384 / XEP-0420 | OMEMO 2 (`urn:xmpp:omemo:2`) with stanza content encryption |
 
@@ -350,12 +354,37 @@ current conversation partner. Everything else is a command.
 /to                       reset the conversation partner
 /msg <jid> <text>         send a single message (alias: /m)
 /fix <text>               correct the last message to this partner (alias: /corr)
+/re <text>                answer the last message from this partner (alias: /reply)
 /status [show] [text]     set the status: available|away|chat|dnd|xa (alias: /s)
 ```
 
 `/fix` takes the **complete new text**, not the change to it. It corrects the
 last message to the current partner and becomes the last one itself, so a
 correction can be corrected.
+
+`/re` answers the last message that **arrived** from the current partner, and
+sends the old text along as `> ` lines so that a client which does not know
+XEP-0461 still shows what the answer is about. Those lines are marked as
+fallback (XEP-0428), so a client which does know it hides them and shows its
+own quotation instead — which is what this console does with incoming answers:
+
+```
+[21:14:32] alice ↩:
+           > Coming along?
+           Eight o'clock then
+```
+
+The quotation is dimmed and the answer is not, because only one of the two was
+written just now. What is quoted when *sending* is the other side's text
+without **its** quotation — otherwise every turn would add a layer of `>` and
+after four exchanges the message would be mostly other people's words.
+
+Two limits worth knowing. There is no `/re` for a particular older message:
+only the last one that arrived can be answered, because that is all a console
+that keeps no history can point at. And a reply is not offered for encrypted
+messages — the `<reply/>` would travel outside the encryption and say who
+answered whom and when, which is the shape of a conversation in clear to anyone
+watching the connection.
 
 ### Contacts (roster)
 

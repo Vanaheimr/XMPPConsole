@@ -64,6 +64,17 @@ class Program
     /// </summary>
     private static MediaStore? _mediaStore;
 
+    /// <summary>
+    /// XEP-0461: the last message that came from each conversation partner -
+    /// the one <c>/re</c> answers.
+    /// </summary>
+    /// <remarks>
+    /// Per partner and not one for everything, because the answer has to go to
+    /// whoever is being answered. One entry per conversation is the whole
+    /// price, and a console that is running for a week has a few dozen of them.
+    /// </remarks>
+    private static readonly Dictionary<String, XMPPMessage> _lastFrom = [];
+
     #endregion
 
     static async Task Main(string[] args)
@@ -723,6 +734,14 @@ class Program
                 }
                 break;
 
+            // XEP-0461: answers the last message from the current conversation
+            // partner. The quoted lines travel along in the body, so that a
+            // client which does not know the extension still shows what this is
+            // about.
+            case "/re" or "/reply":
+                await ProcessReplyCommandAsync(args);
+                break;
+
             case "/status" or "/s":
                 await ProcessStatusCommandAsync(args);
                 break;
@@ -881,6 +900,78 @@ class Program
                 Console.WriteLine($"Unknown command: {command}. Type /help for help.");
                 break;
         }
+
+    }
+
+    /// <summary>
+    /// XEP-0461: answers the last message that came from the current
+    /// conversation partner.
+    /// </summary>
+    /// <remarks>
+    /// <b>The last one that can be answered</b>, which is not always the last
+    /// one: a message out of a room without a name assigned by the room has no
+    /// reference everybody present would read the same way, and is therefore
+    /// never remembered here. That is a limit of the protocol and not of this
+    /// console, and saying so is more use than an answer that points somewhere
+    /// different for every reader.
+    /// </remarks>
+    private static async Task ProcessReplyCommandAsync(String args)
+    {
+
+        var client = _client;
+
+        if (client is null)
+            return;
+
+        if (args.Length == 0)
+        {
+            Console.WriteLine("Syntax: /re <answer>");
+            return;
+        }
+
+        if (client.CurrentChatPartner is null)
+        {
+            Console.WriteLine("No recipient set. Use /to <jid>");
+            return;
+        }
+
+        XMPPMessage? answered;
+
+        lock (_lastFrom)
+            _lastFrom.TryGetValue(client.CurrentChatPartner.Value.Bare.ToString(), out answered);
+
+        if (answered is null)
+        {
+            Console.WriteLine("Nothing has arrived from this contact in this session.");
+            return;
+        }
+
+        if (await client.ReplyToAsync(answered, args) is null)
+        {
+            Console.WriteLine("That message carries no name that could be answered.");
+            return;
+        }
+
+        Console.ForegroundColor = ConsoleColor.DarkGray;
+        Console.WriteLine($"  ↩ {Shorten(answered.Text)}");
+        Console.ResetColor();
+
+        Console.WriteLine($"  Answered to {GetShortJid(client.CurrentChatPartner.Value)}");
+
+    }
+
+    /// <summary>
+    /// A line of somebody else's text, short enough to stand as a reminder of
+    /// which message is being answered.
+    /// </summary>
+    private static String Shorten(String text)
+    {
+
+        var line = text.Replace("\r", "").Replace('\n', ' ').Trim();
+
+        return line.Length <= 60
+                   ? line
+                   : line[..57] + "...";
 
     }
 
@@ -1880,9 +1971,36 @@ class Program
             Console.ForegroundColor = ConsoleColor.Green;
         }
 
+        // XEP-0461: an answer says which message it is about.
+        if (message.IsReply)
+        {
+            Console.ForegroundColor = ConsoleColor.DarkYellow;
+            Console.Write(" ↩");
+            Console.ForegroundColor = ConsoleColor.Green;
+        }
+
         Console.Write(": ");
         Console.ResetColor();
-        Console.Write(message.Body);
+
+        // XEP-0428: the quoted lines are in the body for the benefit of clients
+        // that cannot follow the reference. This one can, so they are shown as
+        // what they are - dimmed, above the answer - instead of twice in the
+        // same colour as the sentence somebody actually wrote.
+        if (message.Quote is String quoted)
+        {
+
+            Console.WriteLine();
+            Console.ForegroundColor = ConsoleColor.DarkGray;
+
+            foreach (var line in quoted.TrimEnd('\n').Split('\n'))
+                Console.WriteLine($"           {line}");
+
+            Console.ResetColor();
+            Console.Write("           ");
+
+        }
+
+        Console.Write(message.Text);
 
         if (message.IsDelayed)
         {
@@ -1900,8 +2018,15 @@ class Program
                    message.Timestamp,
                    ChatLogKind.Incoming,
                    GetShortJid(JID.Parse(message.From.ToString())),
-                   message.Body,
+                   message.Text,
                    NoteFor(message));
+
+        // XEP-0461: what /re will answer. After the log, because a message that
+        // could not be answered - a room message without a name of the room's -
+        // still belongs in it.
+        if (message.ReplyableId is not null)
+            lock (_lastFrom)
+                _lastFrom[message.FromBareJid.ToString()] = message;
 
     }
 
@@ -1916,6 +2041,9 @@ class Program
 
         if (Message.IsCorrection)
             notes.Add($"corrects {Message.ReplacesId}");
+
+        if (Message.RepliesTo is not null)
+            notes.Add($"answers {Message.RepliesTo.Id}");
 
         if (Message.IsDelayed)
             notes.Add(Message.DelayedBy is null
@@ -2285,6 +2413,7 @@ Messages:
   /to                reset the chat partner
   /msg <jid> <text>  send a single message
   /fix <text>        correct the last message (XEP-0308)
+  /re <text>         answer the last message received (XEP-0461)
   /status [show] [text]  change the status (available/away/chat/dnd/xa)
 
 Contacts (roster):
