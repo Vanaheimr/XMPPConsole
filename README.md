@@ -72,6 +72,19 @@ presentation.
 - **PubSub.** Roughly two dozen subcommands under `/pubsub`: subscribe,
   publish, fetch items, create, configure and delete nodes, manage roles,
   subscribers and access models, and answer subscription requests (XEP-0060).
+- **Files.** `/send <path>` puts a file on the server's upload service
+  (XEP-0363) and sends the address; `/send -e <path>` encrypts it first
+  (XEP-0454), and then the storage host holds bytes it cannot read. The limit
+  the service announces is asked for *before* the file is read from disk, so a
+  refusal does not arrive after the reading. An incoming file is shown as one
+  rather than as the address it is, and fetched into the archive when
+  `--storeChatMedia` says so.
+- **Avatars.** `/avatar <path>` publishes a picture over PEP (XEP-0084),
+  `/avatar off` takes it down, `/avatar <jid>` fetches somebody else's and says
+  where it was written. A terminal cannot show a face; what it can do is tell
+  you there is one and put it where something else can open it. A change
+  announced by a contact appears as a note and is **not** fetched: doing that
+  unasked would let every contact decide that this machine downloads something.
 - **OMEMO.** End-to-end encrypted messages, fingerprint comparison and
   per-device trust decisions (XEP-0384).
 - **Operational insight.** `/ping` with round-trip measurement, `/who`,

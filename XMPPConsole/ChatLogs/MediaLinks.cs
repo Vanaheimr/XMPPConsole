@@ -32,9 +32,14 @@ namespace org.GraphDefined.Vanaheimr.XMPPConsole.ChatLogs
     /// </summary>
     /// <remarks>
     /// XMPP has an element for this - <c>&lt;x xmlns='jabber:x:oob'&gt;</c>,
-    /// XEP-0066 - and Ratatoskr does not read it. So the body is all there is,
-    /// and the body does not say what it means. Two rules, and the reason for
-    /// each:
+    /// XEP-0066 - and since D119 Ratatoskr reads it:
+    /// <c>XMPPMessage.FileUrl</c> says outright what a message is about, and
+    /// where it speaks it is believed over anything here.
+    ///
+    /// <b>This stays for the messages that carry no such element</b>, which is
+    /// most of what is in the wild: a client that sends an <c>aesgcm://</c> URL
+    /// in a bare body is doing the ordinary thing, and the body is then all
+    /// there is. Two rules for that case, and the reason for each:
     ///
     /// <b>aesgcm:// always.</b> That scheme exists for nothing but a shared
     /// file (XEP-0454): the URL carries the key to decrypt it. Nobody writes

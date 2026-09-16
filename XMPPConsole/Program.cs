@@ -277,6 +277,7 @@ class Program
         client.OnRoomInvitation            += (timestamp, sender, invitation, ct) => { HandleInvitation(invitation); return Task.CompletedTask; };
         client.OnInvitationDeclined        += (timestamp, sender, declined,   ct) => { HandleDecline(declined);      return Task.CompletedTask; };
         client.OnCarbonMessage             += (timestamp, sender, carbon,      ct) => { HandleCarbon     (carbon);      return Task.CompletedTask; };
+        client.Connection.OnAvatarChanged  += (timestamp, sender, jid, infos, ct) => { HandleAvatarChanged(jid, infos); return Task.CompletedTask; };
         client.OnChatState                 += (timestamp, sender, from, state, ct) => { HandleChatState  (from, state); return Task.CompletedTask; };
         client.OnChatMarker                += (timestamp, sender, marker,      ct) => { HandleChatMarker (marker);      return Task.CompletedTask; };
         client.OnReceiptReceived           += (timestamp, sender, from, id,    ct) => { HandleReceipt    (from, id);    return Task.CompletedTask; };
@@ -791,6 +792,14 @@ class Program
                 await ProcessHistoryCommandAsync(args);
                 break;
 
+            case "/send" or "/file":
+                await ProcessSendFileCommandAsync(args);
+                break;
+
+            case "/avatar":
+                await ProcessAvatarCommandAsync(args);
+                break;
+
             case "/rooms":
                 ShowRooms();
                 break;
@@ -1055,6 +1064,260 @@ class Program
                    : line[..57] + "...";
 
     }
+
+    #region XEP-0363 and XEP-0454: sending a file
+
+    /// <summary>
+    /// Sends a file to whoever the conversation is with.
+    /// </summary>
+    /// <remarks>
+    /// <b>The only way to send something that is not text</b>, and the reason
+    /// it took until now is that it needs two protocols: the slot over the
+    /// stream, the bytes over HTTPS.
+    ///
+    /// <c>-e</c> encrypts it first (XEP-0454), and then the storage host holds
+    /// bytes it cannot read. What that buys is written out in the answer rather
+    /// than assumed, because <c>aesgcm://</c> looks like more than it is: the
+    /// key travels in the URL to whoever gets the message, so whoever can read
+    /// the message can read the file. It is the host that is shut out, not the
+    /// conversation.
+    /// </remarks>
+    private static async Task ProcessSendFileCommandAsync(String args)
+    {
+
+        var client = _client;
+
+        if (client?.CurrentChatPartner is not JID partner)
+        {
+            Console.WriteLine("No conversation open. Use /to <jid> or /join <room>");
+            return;
+        }
+
+        var encrypted = false;
+        var path      = args.Trim();
+
+        if (path.StartsWith("-e ", StringComparison.Ordinal))
+        {
+            encrypted = true;
+            path      = path[3..].Trim();
+        }
+
+        if (path.Length == 0)
+        {
+            Console.WriteLine("Usage: /send [-e] <path>      (-e encrypts it, XEP-0454)");
+            return;
+        }
+
+        path = path.Trim('"');
+
+        var file = new FileInfo(path);
+
+        if (!file.Exists)
+        {
+            Console.WriteLine($"There is no file at {path}");
+            return;
+        }
+
+        // Asked before the file is read from disk, because a service that
+        // announces a limit says so here and nowhere else - and finding out
+        // after reading a hundred megabytes is a worse way to learn it.
+        var service = await client.DiscoverUploadServiceAsync();
+
+        if (service is null)
+        {
+            Console.WriteLine("This server has no upload service, so a file cannot be sent from here.");
+            return;
+        }
+
+        if (service.IsTooLarge(file.Length))
+        {
+            Console.WriteLine($"{file.Name} is {file.Length} bytes and the service takes " +
+                              $"{service.MaxFileSize} at most.");
+            return;
+        }
+
+        using var scope = Output();
+
+        Console.WriteLine($"Sending {file.Name} ({file.Length} bytes){(encrypted ? ", encrypted" : "")}…");
+
+        await using var content = file.OpenRead();
+
+        var sent = encrypted
+                       ? await client.SendEncryptedFileAsync(partner, content, file.Name,
+                                                             MessageTypeOf(client, partner))
+                       : await client.SendFileAsync(partner, content, file.Length, file.Name,
+                                                    HttpFileUpload.GuessContentType(file.Name),
+                                                    MessageTypeOf(client, partner));
+
+        if (!sent.Sent)
+        {
+
+            // Told apart, because they are fixed in different places: a refusal
+            // came from the service over XMPP, a status came from the HTTP end
+            // of it, and neither means the other.
+            Console.WriteLine(sent.Upload.Refusal    is not null ? $"Refused: {sent.Upload.Refusal}"
+                            : sent.Upload.HttpStatus is not null ? $"The upload was refused with HTTP {(Int32) sent.Upload.HttpStatus}"
+                            : "Nothing was sent, and the service said nothing either.");
+
+            if (sent.Upload.MaxFileSize is Int64 limit)
+                Console.WriteLine($"It would take {limit} bytes.");
+
+            return;
+
+        }
+
+        Console.WriteLine(encrypted
+                              ? $"Sent. The service is holding bytes it cannot read; whoever can read " +
+                                 "the message can read the file."
+                              : "Sent.");
+
+    }
+
+    /// <summary>
+    /// A room message where a room is open, an ordinary one otherwise.
+    /// </summary>
+    private static MessageType MessageTypeOf(XMPPClient client, JID partner)
+        => client.Room(partner) is not null
+               ? MessageType.GroupChat
+               : MessageType.Chat;
+
+    #endregion
+
+    #region XEP-0084: avatars
+
+    /// <summary>
+    /// One's own picture, or somebody else's.
+    /// </summary>
+    /// <remarks>
+    /// <b>A terminal cannot show a face</b>, so what this does instead is say
+    /// what there is and put it where something else can open it. That is not a
+    /// consolation prize: the useful half of an avatar for a console is knowing
+    /// that a contact has one and being able to get at it.
+    /// </remarks>
+    private static async Task ProcessAvatarCommandAsync(String args)
+    {
+
+        var client = _client;
+
+        if (client is null)
+        {
+            Console.WriteLine("Not connected.");
+            return;
+        }
+
+        var argument = args.Trim().Trim('"');
+
+        if (argument.Length == 0)
+        {
+            Console.WriteLine("Usage: /avatar <path>         publish this picture");
+            Console.WriteLine("       /avatar off            take it down");
+            Console.WriteLine("       /avatar <jid>          fetch somebody's and say where it went");
+            return;
+        }
+
+        using var scope = Output();
+
+        // Taking it down. An empty <metadata/> and not silence: a node left
+        // alone goes on announcing the old picture to everybody who subscribes
+        // later.
+        if (argument.Equals("off", StringComparison.OrdinalIgnoreCase))
+        {
+
+            Console.WriteLine(await client.RemoveAvatarAsync()
+                                  ? "Your picture is down."
+                                  : "The server would not take the removal.");
+
+            return;
+
+        }
+
+        // Somebody else's.
+        if (JID.TryParse(argument, out var who) && argument.Contains('@'))
+        {
+            await ShowAvatarOfAsync(client, who);
+            return;
+        }
+
+        // One's own.
+        var file = new FileInfo(argument);
+
+        if (!file.Exists)
+        {
+            Console.WriteLine($"There is no file at {argument} - and it is not a JID either.");
+            return;
+        }
+
+        var image = await File.ReadAllBytesAsync(file.FullName);
+
+        if (image.Length > UserAvatar.MaxImageBytes)
+        {
+            Console.WriteLine($"{file.Name} is {image.Length} bytes; an avatar travels in a stanza " +
+                              $"and this client reads at most {UserAvatar.MaxImageBytes}.");
+            return;
+        }
+
+        var info = await client.PublishAvatarAsync(image, HttpFileUpload.GuessContentType(file.Name));
+
+        Console.WriteLine(info is not null
+                              ? $"Published: {info}"
+                              : "The server would not take it. Does it do personal eventing (XEP-0163)?");
+
+    }
+
+    /// <summary>
+    /// Fetches a contact's picture and writes it down.
+    /// </summary>
+    private static async Task ShowAvatarOfAsync(XMPPClient client, JID who)
+    {
+
+        var infos = await client.FetchAvatarInfoAsync(who.Bare);
+
+        // Three answers and not two. Null is "could not ask"; empty is "that
+        // person has no picture", which is an answer; anything else is one.
+        if (infos is null)
+        {
+            Console.WriteLine($"{GetShortJid(who.Bare)} could not be asked - no such account, or the " +
+                               "server keeps no such node.");
+            return;
+        }
+
+        if (infos.Count == 0)
+        {
+            Console.WriteLine($"{GetShortJid(who.Bare)} has no picture.");
+            return;
+        }
+
+        foreach (var info in infos)
+            Console.WriteLine($"  {info}");
+
+        var usable = infos.FirstOrDefault(i => i.Url is null);
+
+        if (usable is null)
+        {
+            Console.WriteLine("  Only offered over HTTP, which this client does not follow: an address " +
+                              "a contact put in a stanza is not one to fetch unasked.");
+            return;
+        }
+
+        var avatar = await client.FetchAvatarAsync(who.Bare, usable);
+
+        if (avatar is null)
+        {
+            Console.WriteLine("  The picture could not be fetched - or the bytes were not the ones " +
+                              "announced, which is the same to whoever wanted to look at it.");
+            return;
+        }
+
+        var into = Path.Combine(Path.GetTempPath(),
+                                $"avatar-{who.Bare.ToString().Replace('@', '-')}-{usable.Id[..8]}.bin");
+
+        await File.WriteAllBytesAsync(into, avatar.Data);
+
+        Console.WriteLine($"  Written to {into}");
+
+    }
+
+    #endregion
 
     #region XEP-0313: the archive
 
@@ -2611,7 +2874,28 @@ class Program
 
         }
 
-        Console.Write(message.Text);
+        // XEP-0066: a message about a file, said as such rather than shown as
+        // the address it is. The body of such a message *is* the URL - which is
+        // right, and is what a client that has never heard of the extension
+        // needs - but this one has heard of it.
+        if (message.FileUrl is Uri file)
+        {
+
+            Console.ForegroundColor = ConsoleColor.Magenta;
+            Console.Write(AesGcmUrl.IsAesGcmUrl(file) ? "[encrypted file] " : "[file] ");
+            Console.ResetColor();
+
+            // The address without the key. It unlocks nothing that is not
+            // already on this screen, and a key that need not be shown should
+            // not be: a terminal is copied, pasted into a bug report, sent on.
+            Console.Write(AesGcmUrl.IsAesGcmUrl(file)
+                              ? AesGcmUrl.ToHttps(file).AbsoluteUri
+                              : file.AbsoluteUri);
+
+        }
+
+        else
+            Console.Write(message.Text);
 
         if (message.IsDelayed)
         {
@@ -2641,6 +2925,36 @@ class Program
 
     }
 
+
+    /// <summary>
+    /// XEP-0084: somebody's picture changed, or came down.
+    /// </summary>
+    /// <remarks>
+    /// <b>A note and not a fetch.</b> What arrives is a few bytes saying what
+    /// the picture is; getting the picture is a second round trip, and doing it
+    /// unasked would mean every contact who changes their avatar decides that
+    /// this machine downloads something. <c>/avatar &lt;jid&gt;</c> is how one
+    /// asks.
+    ///
+    /// An empty list is a removal and says so. It is not the same as never
+    /// having heard of a picture, and a line that said nothing would lose the
+    /// distinction the library goes to some trouble to keep.
+    /// </remarks>
+    private static void HandleAvatarChanged(JID who, IReadOnlyList<AvatarInfo> infos)
+    {
+
+        using var scope = Output();
+
+        Console.ForegroundColor = ConsoleColor.DarkGray;
+
+        Console.WriteLine(infos.Count == 0
+                              ? $"--- {GetShortJid(who.Bare)} took their picture down ---"
+                              : $"--- {GetShortJid(who.Bare)} has a new picture: {infos[0]} " +
+                                 "(/avatar to fetch it) ---");
+
+        Console.ResetColor();
+
+    }
 
     /// <summary>
     /// XEP-0045: somebody wants us in a room.
@@ -3129,6 +3443,9 @@ Messages:
   /nick <name>       a different name in this room
   /topic [text]      the subject of this room
   /history [count]   what was said before, out of the archive (XEP-0313)
+  /send [-e] <path>  send a file; -e encrypts it first (XEP-0363, XEP-0454)
+  /avatar <path>     publish a picture; /avatar off takes it down;
+                     /avatar <jid> fetches somebody else's (XEP-0084)
   /invite <jid> [reason]   ask somebody into this room
   /decline <room> [reason] say no to an invitation that arrived
   /kick <nick> [reason]    throw somebody out for this visit
