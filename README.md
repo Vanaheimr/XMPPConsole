@@ -102,6 +102,7 @@ from this console:
 | XEP-0280 | Message Carbons, with spoofing protection |
 | XEP-0308 | Last message correction (`/fix`) |
 | XEP-0045 | Multi-user chat (`/join`, `/part`, `/rooms`, `/nick`, `/topic`) |
+| XEP-0313 | Message archives (`/history`), and a room's history on entering it |
 | XEP-0359 | Stable stanza IDs — read, to know which name a reply may point at |
 | XEP-0426 / XEP-0428 / XEP-0461 | Message replies (`/re`), with the quoted lines marked as the duplicate they are |
 | XEP-0352 | Client State Indication (`/csi`) |
@@ -361,6 +362,7 @@ current conversation partner. Everything else is a command.
 /rooms                    the rooms, their subjects and who is in them
 /nick <name>              a different name in the current room
 /topic [text]             the subject of the current room (alias: /subject)
+/history [count]          what was said before, out of the archive (alias: /hist)
 /invite <jid> [reason]    ask somebody into the current room
 /decline <room> [reason]  say no to an invitation that arrived
 /kick <nick> [reason]     throw somebody out of the room for this visit
@@ -415,6 +417,30 @@ Leaving, being kicked, being banned and the service shutting down all arrive as
 the same stanza, and the status codes are the only thing that tells them apart.
 Reported as "you have left the room" they read identically — and the one thing
 worth knowing, whether coming back is worth trying, would be the part dropped.
+
+### What was said before
+
+`/join` shows the last ten lines of a room as it lets you in, because walking
+into a room and seeing nothing is walking in blind. `/history [count]` asks for
+more — the **room's** archive for a room and your **own** for a person, which
+are two different archives at two different addresses: your server never saw a
+word of what was said in a room before you arrived.
+
+It is dimmed and carries the date, because none of it is happening now and a
+bare time of day would say that it is. The whole difficulty of an archive on a
+screen is that it looks exactly like a conversation.
+
+A room that keeps no archive says so:
+
+```
+> /history
+chat@conference keeps no archive, so nothing said there can be looked up - or
+answered.
+```
+
+The second half of that sentence is not a throwaway. A room assigns a message
+its own name only if it archives, and without that name there is nothing for a
+reply to point at — so in such a room `/re` cannot work either (XEP-0461 §4).
 
 ### Being asked in, and throwing somebody out
 

@@ -787,6 +787,10 @@ class Program
                 await ProcessPartCommandAsync(args);
                 break;
 
+            case "/history" or "/hist":
+                await ProcessHistoryCommandAsync(args);
+                break;
+
             case "/rooms":
                 ShowRooms();
                 break;
@@ -1052,6 +1056,103 @@ class Program
 
     }
 
+    #region XEP-0313: the archive
+
+    /// <summary>
+    /// XEP-0313: what was said before, out of the archive the server kept.
+    /// </summary>
+    /// <remarks>
+    /// <b>The room's archive for a room and one's own for a person</b>, which
+    /// are two different archives asked at two different addresses. For a room
+    /// that distinction is the whole point: our own server never saw a word of
+    /// what was said in there before we walked in.
+    /// </remarks>
+    private static async Task ProcessHistoryCommandAsync(String args)
+    {
+
+        var client = _client;
+
+        if (client?.CurrentChatPartner is not JID partner)
+        {
+            Console.WriteLine("No conversation open. Use /to <jid> or /join <room>");
+            return;
+        }
+
+        if (!Int32.TryParse(args.Trim(), out var howMany) || howMany <= 0)
+            howMany = 20;
+
+        var room = client.Room(partner);
+
+        var page = room is not null
+                       ? await client.RoomHistoryAsync(room.Address, howMany)
+                       : await client.LastFromArchiveAsync(partner, howMany);
+
+        if (page is null)
+        {
+
+            // Not the same as an empty archive, and worth telling apart: this
+            // one did not answer. For a room it also explains something else -
+            // a room that keeps nothing assigns no name to a message, so
+            // nothing said in it can be answered with /re either (XEP-0461,
+            // section 4).
+            Console.WriteLine(room is not null
+                                  ? $"{GetShortJid(partner)} keeps no archive, so nothing said there " +
+                                    "can be looked up - or answered."
+                                  : "This server kept no archive of that conversation, or refused to say.");
+
+            return;
+
+        }
+
+        if (page.Empty)
+        {
+            Console.WriteLine("The archive has nothing for this conversation.");
+            return;
+        }
+
+        ShowArchive(page, partner);
+
+    }
+
+    /// <summary>
+    /// A page out of an archive, oldest first.
+    /// </summary>
+    /// <remarks>
+    /// <b>Dimmed, and with the date.</b> None of it is happening now, and a
+    /// time of day alone would say it is: the whole difficulty of an archive on
+    /// a screen is that it looks exactly like a conversation.
+    /// </remarks>
+    private static void ShowArchive(ArchivePage Page, JID Partner)
+    {
+
+        using var scope = Output();
+
+        Console.ForegroundColor = ConsoleColor.DarkGray;
+        Console.WriteLine($"--- {Page.Messages.Count} from the archive of {GetShortJid(Partner)}" +
+                          (Page.Complete ? "" : ", and there is more before them") + " ---");
+
+        foreach (var entry in Page.Messages)
+        {
+
+            var who = entry.Message.From.Resourcepart is String nick &&
+                      entry.Message.Type == MessageType.GroupChat
+                          ? nick
+                          : GetShortJid(entry.Message.From.Bare);
+
+            Console.WriteLine($"[{entry.Timestamp.ToLocalTime():dd.MM. HH:mm}] {who}: {entry.Message.Text}");
+
+        }
+
+        Console.WriteLine(Page.Complete
+                              ? "--- that is all of it ---"
+                              : $"--- /history {Page.Messages.Count * 2} for more ---");
+
+        Console.ResetColor();
+
+    }
+
+    #endregion
+
     #region XEP-0045: rooms
 
     /// <summary>
@@ -1132,6 +1233,27 @@ class Program
                           $", {joined.Occupants.Count} present" +
                           (joined.IsNonAnonymous ? " - this room shows everybody's real address" : ""));
         Console.ResetColor();
+
+        // XEP-0313: walking into a room and seeing nothing is walking in blind.
+        // A newly created one has nothing to show, and asking would only produce
+        // a line saying so.
+        if (!joined.WasCreated)
+        {
+
+            var before = await client.RoomHistoryAsync(joined.Address, 10);
+
+            if (before is null)
+            {
+                Console.ForegroundColor = ConsoleColor.DarkGray;
+                Console.WriteLine("           This room keeps no archive - nothing said here can be " +
+                                  "looked up, or answered.");
+                Console.ResetColor();
+            }
+
+            else if (!before.Empty)
+                ShowArchive(before, joined.Address);
+
+        }
 
     }
 
@@ -3006,6 +3128,7 @@ Messages:
   /rooms             the rooms and who is in them
   /nick <name>       a different name in this room
   /topic [text]      the subject of this room
+  /history [count]   what was said before, out of the archive (XEP-0313)
   /invite <jid> [reason]   ask somebody into this room
   /decline <room> [reason] say no to an invitation that arrived
   /kick <nick> [reason]    throw somebody out for this visit
