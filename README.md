@@ -86,7 +86,15 @@ presentation.
   announced by a contact appears as a note and is **not** fetched: doing that
   unasked would let every contact decide that this machine downloads something.
 - **OMEMO.** End-to-end encrypted messages, fingerprint comparison and
-  per-device trust decisions (XEP-0384).
+  per-device trust decisions (XEP-0384) — **in a room as well**, where it needs
+  one thing first: one encrypts to the devices of a real address, and a room
+  hands out nicknames. `/roomencrypt` makes the room non-anonymous, which is
+  what puts real addresses into everybody's view, and it asks before doing it
+  because it changes the room for everybody in it. A line in a room then says
+  which of the two it was — a lock, or the reason it went in the clear — exactly
+  as a one-to-one line does. One occupant whose address the room will not give
+  stops the whole message: a person standing in the room is not a device that
+  can be quietly skipped.
 - **Operational insight.** `/ping` with round-trip measurement, `/who`,
   `/carbons`, `/sm`, `/csi`, `/keepalive`, and `/raw` to watch the actual XML
   going back and forth.
@@ -114,12 +122,12 @@ from this console:
 | XEP-0203 | Delayed delivery — late messages carry their original date |
 | XEP-0280 | Message Carbons, with spoofing protection |
 | XEP-0308 | Last message correction (`/fix`) |
-| XEP-0045 | Multi-user chat (`/join`, `/part`, `/rooms`, `/nick`, `/topic`) |
+| XEP-0045 | Multi-user chat (`/join`, `/part`, `/rooms`, `/nick`, `/topic`), and `/roomencrypt` for the one setting that lets a room be encrypted in |
 | XEP-0313 | Message archives (`/history`), and a room's history on entering it |
 | XEP-0359 | Stable stanza IDs — read, to know which name a reply may point at |
 | XEP-0426 / XEP-0428 / XEP-0461 | Message replies (`/re`), with the quoted lines marked as the duplicate they are |
 | XEP-0352 | Client State Indication (`/csi`) |
-| XEP-0384 / XEP-0420 | OMEMO 2 (`urn:xmpp:omemo:2`) with stanza content encryption |
+| XEP-0384 / XEP-0420 | OMEMO 2 (`urn:xmpp:omemo:2`) with stanza content encryption, one to one and in a room |
 
 Carbons, receipts, PubSub events, roster pushes and caps answers are all
 checked against a forged sender before they are processed.
@@ -373,6 +381,9 @@ current conversation partner. Everything else is a command.
 /join <room> [nick]       enter a room and make it the conversation (alias: /j)
 /part [reason]            leave the current room (alias: /leave)
 /rooms                    the rooms, their subjects and who is in them
+/roomencrypt              make this room non-anonymous, which is what lets it
+                          be written in encrypted - it changes the room for
+                          everybody in it, so it asks first
 /nick <name>              a different name in the current room
 /topic [text]             the subject of the current room (alias: /subject)
 /history [count]          what was said before, out of the archive (alias: /hist)

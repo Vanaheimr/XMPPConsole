@@ -688,15 +688,58 @@ class Program
                                ? _client.Room(partner)
                                : null;
 
-                var messageId = room is not null
-                                    ? await _client.SendRoomMessageAsync(room.Address, input)
-                                    : await _client.SendMessageAsync(input);
+                // XEP-0384 in a room: encrypted when the room can carry it, in
+                // the clear when it cannot - and the line says which of the two
+                // it was, exactly as a one-to-one line does. A room can carry it
+                // only when it names its occupants; see /roomencrypt.
+                String? messageId;
+                String? inTheClear = null;
+
+                if (room is not null)
+                {
+
+                    var why = _client.OmemoEnabled
+                                  ? _client.CannotEncryptInRoom(room.Address)
+                                  : "this client has no OMEMO";
+
+                    if (why is null)
+                    {
+
+                        var sent = await _client.SendEncryptedRoomMessageAsync(room.Address, input);
+
+                        messageId   = sent.MessageId;
+                        inTheClear  = sent.Refusal;
+
+                        // A refusal between the question and the send - somebody
+                        // walked in whose address has not arrived. Not sent in
+                        // the clear behind the writer's back.
+                        if (sent.Refusal is not null)
+                            Console.WriteLine($"  Not sent: {sent.Refusal}");
+
+                    }
+
+                    else
+                    {
+                        messageId   = await _client.SendRoomMessageAsync(room.Address, input);
+                        inTheClear  = why;
+                    }
+
+                }
+
+                else
+                    messageId = await _client.SendMessageAsync(input);
 
                 if (messageId == null)
-                    Console.WriteLine("No recipient set. Use /msg <jid> <message> or /to <jid>");
+                {
+                    if (inTheClear is null)
+                        Console.WriteLine("No recipient set. Use /msg <jid> <message> or /to <jid>");
+                }
                 else
                 {
-                    Console.WriteLine($"  → Sent to {GetShortJid(_client.CurrentChatPartner!.Value)}");
+                    Console.WriteLine($"  → Sent to {GetShortJid(_client.CurrentChatPartner!.Value)}" +
+                                      (room is null      ? ""
+                                     : inTheClear is null ? "  🔒"
+                                     :                      $"  (in the clear: {inTheClear})"));
                     LogMessage(_client.CurrentChatPartner!.Value.Bare.ToString(),
                                DateTime.Now,
                                ChatLogKind.Outgoing,
@@ -802,6 +845,10 @@ class Program
 
             case "/rooms":
                 ShowRooms();
+                break;
+
+            case "/roomencrypt":
+                await ProcessRoomEncryptCommandAsync();
                 break;
 
             case "/nick":
@@ -1538,6 +1585,66 @@ class Program
         await _client.SetChatPartnerAsync(null);
 
         Console.WriteLine($"  Left {GetShortJid(room.Address)}");
+
+    }
+
+    /// <summary>
+    /// XEP-0045, section 10.2.1 and XEP-0384: makes the current room one that
+    /// can be written in encrypted.
+    /// </summary>
+    /// <remarks>
+    /// <b>It changes the room for everybody in it</b>, so it is asked for and
+    /// not done quietly as a side effect of somebody wanting a lock: from then
+    /// on every occupant can see who every other occupant really is. That is the
+    /// price of encrypting to them - one encrypts to the devices of an address,
+    /// and a semi-anonymous room hands out nicknames.
+    ///
+    /// And it helps only the people who come in afterwards. A service is not
+    /// obliged to send the occupants again, and Prosody does not: whoever is
+    /// already standing in the room stays nameless until they send a presence of
+    /// their own. Said here rather than discovered, because the room will
+    /// otherwise look configured and still refuse.
+    /// </remarks>
+    private static async Task ProcessRoomEncryptCommandAsync()
+    {
+
+        var room = CurrentRoom;
+
+        if (room is null)
+        {
+            Console.WriteLine("This conversation is not a room. /rooms shows which are.");
+            return;
+        }
+
+        if (room.IsNonAnonymous)
+        {
+            Console.WriteLine($"  {GetShortJid(room.Address)} already shows everybody's real address.");
+            Console.WriteLine(_client!.CannotEncryptInRoom(room.Address) is String open
+                                  ? $"  Still not encryptable: {open}"
+                                  : "  Encrypted from here on.");
+            return;
+        }
+
+        Console.WriteLine($"  This makes {GetShortJid(room.Address)} non-anonymous: everybody in it");
+        Console.WriteLine( "  will be able to see who everybody else really is, from now on.");
+        Console.Write    ( "  Go ahead? [y/N] ");
+
+        if (Console.ReadLine()?.Trim().ToLowerInvariant() is not ("y" or "yes"))
+        {
+            Console.WriteLine("  Left as it was.");
+            return;
+        }
+
+        if (!await _client!.MakeRoomNonAnonymousAsync(room.Address))
+        {
+            Console.WriteLine("  The service would not do it. Only an owner may configure a room, " +
+                              "and not every service offers the setting.");
+            return;
+        }
+
+        Console.WriteLine("  Done. Whoever comes in from now on can be encrypted to;");
+        Console.WriteLine("  whoever is already here stays nameless until they say something,");
+        Console.WriteLine("  because a service need not announce them again.");
 
     }
 
@@ -3440,6 +3547,9 @@ Messages:
   /re <text>         answer the last message received (XEP-0461)
   /join <room> [nick]  enter a room, /part leaves it (XEP-0045)
   /rooms             the rooms and who is in them
+  /roomencrypt       make this room one that can be written in encrypted
+                     (XEP-0384 in a room needs real addresses, so this makes
+                      the room non-anonymous - for everybody in it)
   /nick <name>       a different name in this room
   /topic [text]      the subject of this room
   /history [count]   what was said before, out of the archive (XEP-0313)
