@@ -276,6 +276,7 @@ class Program
         // anything looking wrong.
         client.OnRoomInvitation            += (timestamp, sender, invitation, ct) => { HandleInvitation(invitation); return Task.CompletedTask; };
         client.OnInvitationDeclined        += (timestamp, sender, declined,   ct) => { HandleDecline(declined);      return Task.CompletedTask; };
+        client.OnInvitationRefused         += (timestamp, sender, refusal,    ct) => { HandleInviteRefused(refusal); return Task.CompletedTask; };
         client.OnCarbonMessage             += (timestamp, sender, carbon,      ct) => { HandleCarbon     (carbon);      return Task.CompletedTask; };
         client.Connection.OnAvatarChanged  += (timestamp, sender, jid, infos, ct) => { HandleAvatarChanged(jid, infos); return Task.CompletedTask; };
         client.OnChatState                 += (timestamp, sender, from, state, ct) => { HandleChatState  (from, state); return Task.CompletedTask; };
@@ -3113,6 +3114,26 @@ class Program
                           GetShortJid(Declined.Room) +
                           (Declined.Reason is not null ? $": {Declined.Reason}" : ""));
         Console.ResetColor();
+
+    }
+
+    /// <summary>
+    /// The room would not pass an invitation on.
+    /// </summary>
+    /// <remarks>
+    /// Until D129 this line did not exist and neither did anything like it:
+    /// <c>/invite</c> printed its cheerful confirmation, the refusal came back
+    /// as an ordinary message error, and nothing here listened for those. So
+    /// the person doing the inviting was told it worked and the person being
+    /// invited was never told anything at all.
+    /// </remarks>
+    private static void HandleInviteRefused(MucInviteRefused Refusal)
+    {
+
+        using var scope = Output();
+
+        WriteWarning($"{GetShortJid(Refusal.Room)} did not pass the invitation of " +
+                     $"{GetShortJid(Refusal.Who)} on: {Refusal.Error.Condition}");
 
     }
 
