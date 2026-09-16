@@ -277,6 +277,7 @@ class Program
         client.OnRoomInvitation            += (timestamp, sender, invitation, ct) => { HandleInvitation(invitation); return Task.CompletedTask; };
         client.OnInvitationDeclined        += (timestamp, sender, declined,   ct) => { HandleDecline(declined);      return Task.CompletedTask; };
         client.OnInvitationRefused         += (timestamp, sender, refusal,    ct) => { HandleInviteRefused(refusal); return Task.CompletedTask; };
+        client.OnRoomDestroyed             += (timestamp, sender, destroyed,  ct) => { HandleRoomDestroyed(destroyed); return Task.CompletedTask; };
         client.OnCarbonMessage             += (timestamp, sender, carbon,      ct) => { HandleCarbon     (carbon);      return Task.CompletedTask; };
         client.Connection.OnAvatarChanged  += (timestamp, sender, jid, infos, ct) => { HandleAvatarChanged(jid, infos); return Task.CompletedTask; };
         client.OnChatState                 += (timestamp, sender, from, state, ct) => { HandleChatState  (from, state); return Task.CompletedTask; };
@@ -850,6 +851,14 @@ class Program
 
             case "/roomencrypt":
                 await ProcessRoomEncryptCommandAsync();
+                break;
+
+            case "/destroyroom":
+                await ProcessDestroyRoomCommandAsync(args);
+                break;
+
+            case "/affiliations":
+                await ProcessRoomAffiliationsCommandAsync(args);
                 break;
 
             case "/nick":
@@ -1606,6 +1615,152 @@ class Program
     /// their own. Said here rather than discovered, because the room will
     /// otherwise look configured and still refuse.
     /// </remarks>
+
+    /// <summary>
+    /// XEP-0045, section 10.9: takes this room down for everybody.
+    /// </summary>
+    /// <remarks>
+    /// Asked before it is done, like <c>/roomencrypt</c> and for a stronger
+    /// reason: this one cannot be undone by anybody, and it happens to
+    /// everybody who is standing in the room.
+    ///
+    /// The argument is an <b>alternative</b>, not a reason, and that ordering is
+    /// deliberate. The service hands the alternative to every occupant, and it
+    /// is the only part of a destruction that is of use to them - so it is the
+    /// easy thing to type, and the reason comes after it.
+    /// </remarks>
+    private static async Task ProcessDestroyRoomCommandAsync(String args)
+    {
+
+        var room = CurrentRoom;
+
+        if (room is null)
+        {
+            Console.WriteLine("This conversation is not a room. /rooms shows which are.");
+            return;
+        }
+
+        var parts      = args.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+        var alternate  = parts.Length > 0 ? JID.TryParse(parts[0]) : null;
+        var reason     = parts.Length > 1 ? parts[1] : null;
+
+        if (parts.Length > 0 && alternate is null)
+        {
+            Console.WriteLine($"  '{parts[0]}' is not an address. Usage: /destroyroom [elsewhere@service] [reason]");
+            return;
+        }
+
+        Console.WriteLine($"  This takes {GetShortJid(room.Address)} down for everybody in it, for good.");
+
+        if (alternate is JID goingTo)
+            Console.WriteLine($"  They will be sent to {GetShortJid(goingTo)}.");
+        else
+            Console.WriteLine( "  Nobody will be told where to go instead - name an address to say.");
+
+        Console.Write        ( "  Go ahead? [y/N] ");
+
+        if (Console.ReadLine()?.Trim().ToLowerInvariant() is not ("y" or "yes"))
+        {
+            Console.WriteLine("  Left standing.");
+            return;
+        }
+
+        if (!await _client!.DestroyRoomAsync(room.Address, reason, alternate))
+        {
+            Console.WriteLine("  The service would not do it. Only an owner may destroy a room, " +
+                              "and being in it is not the same as owning it.");
+            return;
+        }
+
+        Console.WriteLine("  Gone.");
+
+    }
+
+    /// <summary>
+    /// XEP-0045, section 9.5: who is on one of this room's lists.
+    /// </summary>
+    /// <remarks>
+    /// Says nothing and says it plainly when there is nobody, because "no
+    /// members" and "this room will not tell you" are different answers and the
+    /// second one is the more useful of the two.
+    /// </remarks>
+    private static async Task ProcessRoomAffiliationsCommandAsync(String args)
+    {
+
+        var room = CurrentRoom;
+
+        if (room is null)
+        {
+            Console.WriteLine("This conversation is not a room. /rooms shows which are.");
+            return;
+        }
+
+        var wanted = args.Trim().ToLowerInvariant() switch {
+                         "owner"   or "owners"   => MucAffiliation.Owner,
+                         "admin"   or "admins"   => MucAffiliation.Admin,
+                         "outcast" or "banned"   => MucAffiliation.Outcast,
+                         ""        or "member"
+                                   or "members"  => MucAffiliation.Member,
+                         _                       => (MucAffiliation?) null
+                     };
+
+        if (wanted is null)
+        {
+            Console.WriteLine("  Usage: /affiliations [members|admins|owners|banned]");
+            return;
+        }
+
+        var list = await _client!.RoomAffiliationsAsync(room.Address, wanted.Value);
+
+        if (list is null)
+        {
+            Console.WriteLine($"  {GetShortJid(room.Address)} would not say. Only somebody entitled " +
+                               "to administer a room may ask it who is on its lists.");
+            return;
+        }
+
+        if (list.Count == 0)
+        {
+            Console.WriteLine($"  Nobody is {wanted.Value.AsText()} of {GetShortJid(room.Address)}.");
+            return;
+        }
+
+        Console.WriteLine($"  {wanted.Value.AsText()} of {GetShortJid(room.Address)}:");
+
+        foreach (var entry in list)
+            Console.WriteLine($"    {GetShortJid(entry.Jid)}" +
+                              (entry.Nick   is not null ? $"  ({entry.Nick})" : "") +
+                              (entry.Reason is not null ? $"  - {entry.Reason}" : ""));
+
+    }
+
+    /// <summary>
+    /// The room was taken down under us.
+    /// </summary>
+    /// <remarks>
+    /// Written out rather than left to the departure line, because it is not a
+    /// departure: nobody left, and where everybody is meant to go instead
+    /// arrives with it and exists nowhere else.
+    /// </remarks>
+    private static void HandleRoomDestroyed(MucRoomDestroyed Destroyed)
+    {
+
+        using var scope = Output();
+
+        WriteWarning($"{GetShortJid(Destroyed.Room)} has been taken down" +
+                     (Destroyed.Reason is not null ? $": {Destroyed.Reason}" : "."));
+
+        if (Destroyed.Alternate is JID goingTo)
+        {
+            Console.ForegroundColor = ConsoleColor.DarkGray;
+            Console.WriteLine($"  Everybody was sent to {GetShortJid(goingTo)}" +
+                              (Destroyed.Password is not null ? "  (it wants a password)" : "") +
+                              $" - /join {goingTo} to follow.");
+            Console.ResetColor();
+        }
+
+    }
+
     private static async Task ProcessRoomEncryptCommandAsync()
     {
 
@@ -3571,6 +3726,13 @@ Messages:
   /roomencrypt       make this room one that can be written in encrypted
                      (XEP-0384 in a room needs real addresses, so this makes
                       the room non-anonymous - for everybody in it)
+  /affiliations [members|admins|owners|banned]
+                     who is on one of this room's lists (XEP-0045, 9.5) -
+                     an affiliation outlives a visit, a role does not
+  /destroyroom [elsewhere@service] [reason]
+                     take this room down for everybody, for good. The address
+                     is where they are sent instead, and it is the only part
+                     of it that is any use to them
   /nick <name>       a different name in this room
   /topic [text]      the subject of this room
   /history [count]   what was said before, out of the archive (XEP-0313)
