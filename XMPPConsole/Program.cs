@@ -76,6 +76,18 @@ class Program
     private static readonly Dictionary<String, XMPPMessage> _lastFrom = [];
 
     /// <summary>
+    /// XEP-0045, section 8.6: voice requests that have arrived and not been
+    /// answered.
+    /// </summary>
+    /// <remarks>
+    /// The whole request is kept and not a note about it, because the answer
+    /// is the same form sent back - and a moderator is rarely at the keyboard
+    /// at the moment somebody asks.
+    /// </remarks>
+    private static readonly Dictionary<String, MucVoiceRequest> _voiceRequests = [];
+    private static readonly Lock _voiceLock = new ();
+
+    /// <summary>
     /// XEP-0045: invitations that have arrived and not been answered.
     /// </summary>
     /// <remarks>
@@ -278,6 +290,7 @@ class Program
         client.OnInvitationDeclined        += (timestamp, sender, declined,   ct) => { HandleDecline(declined);      return Task.CompletedTask; };
         client.OnInvitationRefused         += (timestamp, sender, refusal,    ct) => { HandleInviteRefused(refusal); return Task.CompletedTask; };
         client.OnRoomDestroyed             += (timestamp, sender, destroyed,  ct) => { HandleRoomDestroyed(destroyed); return Task.CompletedTask; };
+        client.OnVoiceRequested            += (timestamp, sender, request,    ct) => { HandleVoiceRequested(request);  return Task.CompletedTask; };
         client.OnCarbonMessage             += (timestamp, sender, carbon,      ct) => { HandleCarbon     (carbon);      return Task.CompletedTask; };
         client.Connection.OnAvatarChanged  += (timestamp, sender, jid, infos, ct) => { HandleAvatarChanged(jid, infos); return Task.CompletedTask; };
         client.OnChatState                 += (timestamp, sender, from, state, ct) => { HandleChatState  (from, state); return Task.CompletedTask; };
@@ -859,6 +872,22 @@ class Program
 
             case "/affiliations":
                 await ProcessRoomAffiliationsCommandAsync(args);
+                break;
+
+            case "/askvoice":
+                await ProcessAskVoiceCommandAsync();
+                break;
+
+            case "/grantvoice":
+                await ProcessVoiceAnswerCommandAsync(args, allow: true);
+                break;
+
+            case "/denyvoice":
+                await ProcessVoiceAnswerCommandAsync(args, allow: false);
+                break;
+
+            case "/holdnick":
+                await ProcessHoldNickCommandAsync(args);
                 break;
 
             case "/nick":
@@ -1629,6 +1658,160 @@ class Program
     /// is the only part of a destruction that is of use to them - so it is the
     /// easy thing to type, and the reason comes after it.
     /// </remarks>
+
+    /// <summary>
+    /// XEP-0045, section 8.6: asks a moderated room to be allowed to speak.
+    /// </summary>
+    /// <remarks>
+    /// Says what it does and does not promise: nobody answers a voice request,
+    /// so the only thing that will ever come back is a line saying the role
+    /// changed, whenever a moderator gets round to it.
+    /// </remarks>
+    private static async Task ProcessAskVoiceCommandAsync()
+    {
+
+        var room = CurrentRoom;
+
+        if (room is null)
+        {
+            Console.WriteLine("This conversation is not a room. /rooms shows which are.");
+            return;
+        }
+
+        if (!await _client!.RequestVoiceAsync(room.Address))
+        {
+            Console.WriteLine("  Not in that room.");
+            return;
+        }
+
+        Console.WriteLine("  Asked. Nobody answers a voice request - if a moderator agrees, the");
+        Console.WriteLine("  room says so by giving the role, and that turns up here as a line.");
+
+    }
+
+    /// <summary>
+    /// XEP-0045, section 7.10: claims a nickname in this room.
+    /// </summary>
+    private static async Task ProcessHoldNickCommandAsync(String args)
+    {
+
+        var room = CurrentRoom;
+
+        if (room is null)
+        {
+            Console.WriteLine("This conversation is not a room. /rooms shows which are.");
+            return;
+        }
+
+        var wanted = args.Trim();
+
+        if (wanted.Length == 0)
+        {
+
+            var held = await _client!.RoomNicknameAsync(room.Address);
+
+            Console.WriteLine(held is null
+                                  ? $"  {GetShortJid(room.Address)} will not say, which is what a room " +
+                                     "that keeps no reservations answers."
+                                  : held.Registered
+                                        ? $"  Held here: {held.Nick ?? "a nickname the room will not name"}."
+                                        : "  Nothing held here. /holdnick <name> claims one.");
+            return;
+
+        }
+
+        if (!await _client!.ReserveRoomNicknameAsync(room.Address, wanted))
+        {
+            Console.WriteLine("  The room would not hold it. It may keep no reservations at all, " +
+                              "or somebody else may hold that name.");
+            return;
+        }
+
+        Console.WriteLine($"  Held: {wanted}. Nobody else may enter under it - which is not the " +
+                           "same as being in the room under it.");
+
+    }
+
+    /// <summary>
+    /// Somebody in a room we moderate is asking to speak.
+    /// </summary>
+    /// <remarks>
+    /// Written out because nothing else would show it: the request has no body
+    /// and no status code, so before D133 it went past as an empty line or as
+    /// nothing at all, and the person asking waited for an answer that no
+    /// moderator knew was owed.
+    ///
+    /// The real address is shown beside the nickname where the room gave one.
+    /// In a semi-anonymous room that is the whole of what a moderator has to
+    /// decide on.
+    /// </remarks>
+    private static void HandleVoiceRequested(MucVoiceRequest Request)
+    {
+
+        using var scope = Output();
+
+        Console.ForegroundColor = ConsoleColor.Yellow;
+        Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {Request.Nick ?? "somebody"} asks to speak in " +
+                          GetShortJid(Request.Room) +
+                          (Request.Jid is JID who ? $"  ({GetShortJid(who.Bare)})" : ""));
+        Console.ResetColor();
+
+        Console.ForegroundColor = ConsoleColor.DarkGray;
+        Console.WriteLine($"  /grantvoice {Request.Nick} - or /denyvoice {Request.Nick}");
+        Console.ResetColor();
+
+        lock (_voiceLock)
+            _voiceRequests[Request.Nick ?? ""] = Request;
+
+    }
+
+    /// <summary>
+    /// A moderator's yes or no to a request that arrived earlier.
+    /// </summary>
+    /// <remarks>
+    /// Kept by nickname rather than answered on the spot, because a moderator
+    /// is not usually at the keyboard when the request arrives - and the form
+    /// has to go back whole, so the request itself is what is kept and not a
+    /// note about it.
+    /// </remarks>
+    private static async Task ProcessVoiceAnswerCommandAsync(String args, Boolean allow)
+    {
+
+        var nick = args.Trim();
+
+        if (nick.Length == 0)
+        {
+            Console.WriteLine($"Syntax: /{(allow ? "grantvoice" : "denyvoice")} <nick>");
+            return;
+        }
+
+        MucVoiceRequest? request;
+
+        lock (_voiceLock)
+            _voiceRequests.TryGetValue(nick, out request);
+
+        if (request is null)
+        {
+            Console.WriteLine($"  Nobody called {nick} has asked to speak in this session.");
+            return;
+        }
+
+        if (!await _client!.AnswerVoiceRequestAsync(request, allow))
+        {
+            Console.WriteLine("  Not in that room any more.");
+            return;
+        }
+
+        lock (_voiceLock)
+            _voiceRequests.Remove(nick);
+
+        Console.WriteLine(allow
+                              ? $"  {nick} may speak."
+                              : $"  {nick} was refused. They are told by nothing changing, which " +
+                                 "is the best a room can do here.");
+
+    }
+
     private static async Task ProcessDestroyRoomCommandAsync(String args)
     {
 
@@ -3726,6 +3909,12 @@ Messages:
   /roomencrypt       make this room one that can be written in encrypted
                      (XEP-0384 in a room needs real addresses, so this makes
                       the room non-anonymous - for everybody in it)
+  /askvoice          ask a moderated room to be allowed to speak (XEP-0045, 8.6);
+                     nobody answers it - a moderator gives the role or does not
+  /grantvoice <nick> / /denyvoice <nick>
+                     answer a request that arrived here
+  /holdnick [name]   claim a nickname in this room so nobody else may enter
+                     under it (XEP-0045, 7.10); without a name, says what is held
   /affiliations [members|admins|owners|banned]
                      who is on one of this room's lists (XEP-0045, 9.5) -
                      an affiliation outlives a visit, a role does not
