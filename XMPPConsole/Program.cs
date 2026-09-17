@@ -878,6 +878,10 @@ class Program
                 await ProcessAskVoiceCommandAsync();
                 break;
 
+            case "/pm":
+                await ProcessRoomPrivateCommandAsync(args);
+                break;
+
             case "/grantvoice":
                 await ProcessVoiceAnswerCommandAsync(args, allow: true);
                 break;
@@ -1667,6 +1671,52 @@ class Program
     /// so the only thing that will ever come back is a line saying the role
     /// changed, whenever a moderator gets round to it.
     /// </remarks>
+    /// <summary>
+    /// XEP-0045, section 7.5: says something to one occupant and to nobody
+    /// else in the room.
+    /// </summary>
+    /// <remarks>
+    /// By nickname, because that is what one has: a semi-anonymous room gives
+    /// out no real addresses, and the room is what routes this.
+    /// </remarks>
+    private static async Task ProcessRoomPrivateCommandAsync(String args)
+    {
+
+        var room = CurrentRoom;
+
+        if (room is null)
+        {
+            Console.WriteLine("This conversation is not a room. /rooms shows which are.");
+            return;
+        }
+
+        var parts = args.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+
+        if (parts.Length < 2)
+        {
+            Console.WriteLine("Syntax: /pm <nick> <text>");
+            return;
+        }
+
+        if (!room.Occupants.ContainsKey(parts[0]))
+        {
+            Console.WriteLine($"  Nobody called {parts[0]} is in {GetShortJid(room.Address)}. " +
+                               "/rooms shows who is.");
+            return;
+        }
+
+        if (await _client!.SendRoomPrivateMessageAsync(room.Address, parts[0], parts[1]) is null)
+        {
+            Console.WriteLine("  Not in that room.");
+            return;
+        }
+
+        Console.ForegroundColor = ConsoleColor.Magenta;
+        Console.WriteLine($"  (privately) to {parts[0]}: {parts[1]}");
+        Console.ResetColor();
+
+    }
+
     private static async Task ProcessAskVoiceCommandAsync()
     {
 
@@ -3277,6 +3327,17 @@ class Program
                           ? $"[{message.Timestamp:dd.MM. HH:mm:ss}] "
                           : $"[{message.Timestamp:HH:mm:ss}] ");
 
+        // XEP-0045, section 7.5: said to us alone, inside a room. Marked,
+        // because it arrives from a room address like everything else the room
+        // sends and would otherwise read as something said to everybody - and
+        // whoever answers it believing that says out loud what was told to them
+        // in confidence.
+        if (message.IsRoomPrivate)
+        {
+            Console.ForegroundColor = ConsoleColor.Magenta;
+            Console.Write("(privately) ");
+        }
+
         Console.ForegroundColor = ConsoleColor.Green;
         Console.Write($"{GetShortJid(JID.Parse(message.From.ToString()))}");
 
@@ -3909,6 +3970,9 @@ Messages:
   /roomencrypt       make this room one that can be written in encrypted
                      (XEP-0384 in a room needs real addresses, so this makes
                       the room non-anonymous - for everybody in it)
+  /pm <nick> <text>  say something to one occupant and to nobody else in the
+                     room (XEP-0045, 7.5) - it goes through the room, so a
+                     nickname is all that is needed and all that is usually had
   /askvoice          ask a moderated room to be allowed to speak (XEP-0045, 8.6);
                      nobody answers it - a moderator gives the role or does not
   /grantvoice <nick> / /denyvoice <nick>
