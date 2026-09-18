@@ -78,7 +78,15 @@ This is the highest-severity protocol error. XEP-0384 exists to protect against 
 
 ---
 
-### 2. Endpoint discovery: HTTPS may redirect to HTTP; `wss://` host is not bound to the JID domain
+### 2. ✅ Endpoint discovery: HTTPS may redirect to HTTP; `wss://` host is not bound to the JID domain
+
+*Closed in D139, and both halves needed checking rather than fixing.*
+
+*The **first** does not hold on this platform. .NET refuses a redirect from a secure to an insecure scheme in `RedirectHandler.GetUriForRedirect` — "Disallow automatic redirection from secure to non-secure schemes" — so the 302 is never followed, the answer is the redirect itself, `IsSuccessStatusCode` is false, and the fetch gives back nothing. The chain breaks at its first link. That was worth reading rather than assuming, in both directions: the finding was believed here for a day on the strength of the code alone.*
+
+*What it left behind was real all the same, and is what changed: the defence was **inherited, unstated and untested**. Whoever put a handler of their own into that field would have taken it away with nothing going red. The handler is written out now, redirects stay allowed because https→https is ordinary and stays within the XEP, and `MayBeRead` asks the scheme of the address the answer actually came from — the MUST at the end of the chain and not only at its start. A test holds it; dropping the rule turns that test red (M24).*
+
+*The **second half must not be done as asked.** Binding the `wss://` host to the JID domain would break what XEP-0156 is for: a domain putting its XMPP service somewhere else. The XRD example in the XEP does exactly that — example.com answering with `web.example.com` — and so does the fixture in this repository's own tests. The XEP's rule is one about the certificate and not about the name: "send SNI matching the host of the URL from the connection URL and validate that the certificate is valid for that host **or** the XMPP domain", which happens where the socket is opened. A second test now pins the omission as a decision, so that nobody closes it on a quiet afternoon.*
 
 `AltConnectionsResolver` checks only the **initial** URL for `https://`. The shared `HttpClient` follows redirects by default, including to `http://`.
 
@@ -199,9 +207,9 @@ The crypto itself (X3DH, double ratchet, payload AES, small-order check, `MaxSki
 
 ---
 
-### 8. SASL: no channel binding, PLAIN as last resort, pinning only from the second login
+### 8. SASL: ~~no channel binding~~, PLAIN as last resort, pinning only from the second login
 
-- No `SCRAM-SHA-256-PLUS` / `tls-exporter` (RFC 9266). A TLS man in the middle with a trusted certificate (compromised CA, mis-issued cert) sees the mechanism list and can force PLAIN — on the **first** connect.
+- ✅ No `SCRAM-SHA-256-PLUS` / `tls-exporter` (RFC 9266). A TLS man in the middle with a trusted certificate (compromised CA, mis-issued cert) sees the mechanism list and can force PLAIN — on the **first** connect. *(Overtaken by the code, and noticed only in D138. `SaslMechanismPolicy` ranks `SCRAM-SHA-256-PLUS` and `SCRAM-SHA-1-PLUS` above every unbound mechanism — a bound one outranks even a stronger hash that is not bound — `XMPPConnection` calls `PerformScramAsync(..., bind: true)` for them, and `TlsServerEndPoint` computes `tls-exporter`, `tls-unique` and `tls-server-end-point`. This sentence had been copied into the suite's own README, where it said the whole thing was not implemented; of all the directions to be wrong about a downgrade defence that is the worst one, because a reader concludes the client cannot bind and looks for the gap somewhere else.)*
 - ✅ The console does not set `MinimumSaslMechanism`. Anyone who knows their server should demand at least `SCRAM-SHA-256`. *(Set, and to exactly that.)*
 - The password is kept as a `string` on `XMPPConnection` for the lifetime of the process (not wipeable; survives in heap dumps).
 
@@ -263,7 +271,7 @@ _domain    = parts[1];
 
 1. ✅ **`SendIqAsync`:** store the expected `from` (or “own server / no `from`”) and compare it before completing the wait. Use random IDs (`Guid`), not `pep-1`.  *(The comparison is in; the identifiers stayed countable.)*
 2. ✅ **OMEMO carbons:** spoofing check first, then decrypt. Reject a missing SCE `<from/>` when `expectedFrom` is set. Set `to` on encrypt.  *(The first two; `to` stays out — see finding 5.)*
-3. **Transport:** ✅ refuse `ws://`. Follow host-meta redirects only to `https://`. Check the final URI. Bind the `wss://` host to the JID domain or an allow-list.
+3. **Transport:** ✅ refuse `ws://`. ✅ Follow host-meta redirects only to `https://` — which .NET already did, so what D139 added is the check of the final URI and a test, turning an inherited default into a stated rule. ✅ Check the final URI. ~~Bind the `wss://` host to the JID domain or an allow-list~~ — *not done, and deliberately: that is the delegation XEP-0156 exists to permit, and its own rule is about the certificate rather than the name.*
 4. ✅ **SCRAM:** reject `i < 4096`; impose a hard maximum (for example 1_000_000).
 5. ✅ **DoS:** maximum frame size (for example 1–4 MiB) on both receive paths and in `XmlStreamSplitter`.
 6. **OMEMO store:** ✅ file mode `0600`, optional OS-backed encryption. ✅ Republish prekeys after use. ✅ Rotate the signed prekey.
