@@ -790,6 +790,13 @@ nothing marks it as having been encrypted at all.
   output into a bug report unedited.
 - `XMPPConsole/Properties/launchSettings.json` is a local debugging profile. If
   you put real credentials in it, keep it out of the repository.
+- **The password stays in memory for as long as the connection does**, as an
+  ordinary string, so a crash dump of this process contains it. That is a named
+  trade-off and not an oversight: SCRAM needs it at every authentication and not
+  only the first, so removing it means an API that can demand a password back at
+  any moment. Worth knowing what it costs — whoever can read this process
+  already has the session and the OMEMO identity, so what the password adds is
+  worth something *elsewhere*, wherever it was reused.
 
 **Where the reasoning lives.** A code review of this console and of Ratatoskr
 was made in August 2026 and is kept in

@@ -22,11 +22,17 @@ are not:
 | | |
 |---|---|
 | 7 | four of five closed. `TrustNewDevicesBlindly = true` stays, and the report itself calls it a deliberate trade-off |
-| 8 | the channel-binding sentence was overtaken by the code and is struck; PLAIN as a last resort is by design. **The password kept as a `string` for the life of the process is the one item in this document with neither a fix nor a reason** |
+| 8 | all three answered. The channel-binding sentence was overtaken by the code and is struck; PLAIN as a last resort is by design; the password kept as a `string` is a named trade-off since D139, with what it costs written beside it |
 | 10 | four of seven closed. PLAIN by default and its timing are marked *left as it is*, with the reason; `Ed25519Math` is scoped by the report itself as acceptable for a client |
 
 Of the eleven **Low / design** rows two are closed and the rest are trade-offs
 named where they are made.
+
+**Nothing in this document is now unanswered.** Every finding is either closed or
+carries the reason it is not — which is a different claim from "everything is
+fixed", and the weaker of the two on purpose: six things are deliberately left
+standing, and the point of the reasons is that somebody can disagree with them
+later without first having to rediscover what they were.
 
 ### Why this file is kept rather than deleted
 
@@ -242,7 +248,9 @@ The crypto itself (X3DH, double ratchet, payload AES, small-order check, `MaxSki
 
 - ✅ No `SCRAM-SHA-256-PLUS` / `tls-exporter` (RFC 9266). A TLS man in the middle with a trusted certificate (compromised CA, mis-issued cert) sees the mechanism list and can force PLAIN — on the **first** connect. *(Overtaken by the code, and noticed only in D138. `SaslMechanismPolicy` ranks `SCRAM-SHA-256-PLUS` and `SCRAM-SHA-1-PLUS` above every unbound mechanism — a bound one outranks even a stronger hash that is not bound — `XMPPConnection` calls `PerformScramAsync(..., bind: true)` for them, and `TlsServerEndPoint` computes `tls-exporter`, `tls-unique` and `tls-server-end-point`. This sentence had been copied into the suite's own README, where it said the whole thing was not implemented; of all the directions to be wrong about a downgrade defence that is the worst one, because a reader concludes the client cannot bind and looks for the gap somewhere else.)*
 - ✅ The console does not set `MinimumSaslMechanism`. Anyone who knows their server should demand at least `SCRAM-SHA-256`. *(Set, and to exactly that.)*
-- The password is kept as a `string` on `XMPPConnection` for the lifetime of the process (not wipeable; survives in heap dumps).
+- The password is kept as a `string` on `XMPPConnection` for the lifetime of the process (not wipeable; survives in heap dumps). *(Left as it is, and named rather than quietly carried — D139. SCRAM needs the password at **every** authentication, not only the first: `_saltedPassword` caches the PBKDF2 result but is reused only while password, salt and iteration count all still agree, and the server decides the last two. Dropping the field therefore means asking the caller again whenever a server changes them — a callback in the API rather than a change to a field, and an API that can be woken at any moment to demand a password is its own kind of hazard. `SecureString` is not the answer; Microsoft advises against it on .NET Core, where it neither encrypts reliably nor wipes across platforms.*
+  
+  *What the trade-off actually costs is worth stating plainly, because it is smaller than it looks and not zero. Whoever can read this process's memory already has the session, the SaltedKey and the OMEMO identity — everything needed for **this** account. What the plaintext password adds on top is worth something **elsewhere**: people reuse passwords, and a dump that yields one yields a key to other services. That, and not this session, is what is being traded away.)*
 
 ---
 
