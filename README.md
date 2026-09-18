@@ -122,20 +122,25 @@ from this console:
 | XEP-0203 | Delayed delivery — late messages carry their original date |
 | XEP-0280 | Message Carbons, with spoofing protection |
 | XEP-0308 | Last message correction (`/fix`) |
-| XEP-0045 | Multi-user chat (`/join`, `/part`, `/rooms`, `/nick`, `/topic`), and `/roomencrypt` for the one setting that lets a room be encrypted in |
+| XEP-0424 | Message retraction (`/unsay`) — a request and not a deletion, and the archive keeps its own copy |
+| XEP-0045 | Multi-user chat (`/join`, `/part`, `/rooms`, `/nick`, `/topic`), and `/roomencrypt` for the one setting that lets a room be encrypted in. The moderator's half (`/kick`, `/ban`, `/voice`, `/askvoice`, `/grantvoice`, `/denyvoice`) and the owner's (`/affiliations`, `/destroyroom`), a nickname held against everybody else (`/holdnick`, section 7.10), and the private word of section 7.5 (`/pm`) |
 | XEP-0313 | Message archives (`/history`), and a room's history on entering it |
 | XEP-0359 | Stable stanza IDs — read, to know which name a reply may point at |
 | XEP-0426 / XEP-0428 / XEP-0461 | Message replies (`/re`), with the quoted lines marked as the duplicate they are |
 | XEP-0352 | Client State Indication (`/csi`) |
+| XEP-0363 / XEP-0454 | HTTP file upload (`/send`), encrypted first with `-e` |
+| XEP-0084 | Avatars (`/avatar`), over XEP-0163 |
 | XEP-0384 / XEP-0420 | OMEMO 2 (`urn:xmpp:omemo:2`) with stanza content encryption, one to one and in a room |
 
 Carbons, receipts, PubSub events, roster pushes and caps answers are all
 checked against a forged sender before they are processed.
 
-Not implemented: MUC/MIX group chat, MAM history, HTTP file upload, Jingle,
-blocking, avatars, in-band registration, SASL2/Bind 2. The full catalogue of
-what a modern XMPP client could speak — and where each specification stands —
-is in [docs/STANDARDS.md](docs/STANDARDS.md).
+Not implemented: MIX (XEP-0369), Jingle, blocking (XEP-0191), and in-band
+registration of an account — XEP-0077 is here, but only pointed at a room, which
+is what `/holdnick` is. SASL2 and Bind 2 need no command: the console speaks
+them because Ratatoskr negotiates them. The full catalogue of what a modern
+XMPP client could speak — and where each specification stands — is in
+[docs/STANDARDS.md](docs/STANDARDS.md).
 
 ## Requirements
 
@@ -377,6 +382,7 @@ current conversation partner. Everything else is a command.
 /to                       reset the conversation partner
 /msg <jid> <text>         send a single message (alias: /m)
 /fix <text>               correct the last message to this partner (alias: /corr)
+/unsay                    take back the last thing said (alias: /retract)
 /re <text>                answer the last message from this partner (alias: /reply)
 /join <room> [nick]       enter a room and make it the conversation (alias: /j)
 /part [reason]            leave the current room (alias: /leave)
@@ -384,20 +390,35 @@ current conversation partner. Everything else is a command.
 /roomencrypt              make this room non-anonymous, which is what lets it
                           be written in encrypted - it changes the room for
                           everybody in it, so it asks first
+/pm <nick> <text>         a word to one occupant and to nobody else
 /nick <name>              a different name in the current room
+/holdnick [name]          claim a nickname here; bare, says what is held
 /topic [text]             the subject of the current room (alias: /subject)
 /history [count]          what was said before, out of the archive (alias: /hist)
 /invite <jid> [reason]    ask somebody into the current room
 /decline <room> [reason]  say no to an invitation that arrived
 /kick <nick> [reason]     throw somebody out of the room for this visit
 /ban <nick> [reason]      keep somebody out of the room for good
+/affiliations [which]     who is on one of this room's lists
+/destroyroom [jid] [reason]
+                          take this room down for everybody, for good
 /voice <nick> on|off      the voice in a moderated room
+/askvoice                 ask a moderated room to be allowed to speak
+/grantvoice <nick>        answer a request for a voice that arrived here
+/denyvoice <nick>         refuse one
 /status [show] [text]     set the status: available|away|chat|dnd|xa (alias: /s)
 ```
 
 `/fix` takes the **complete new text**, not the change to it. It corrects the
 last message to the current partner and becomes the last one itself, so a
 correction can be corrected.
+
+`/unsay` takes back the last thing said in this conversation (XEP-0424). It is
+**a request and not a deletion**: what the far side does with it is theirs, the
+archive keeps its own copy, and whoever was reading has already read. In a room
+what it takes back is the line under the name the *room* gave it — and that name
+arrives only when the room hands our own line back, so the console notes it from
+the reflection and not from the send.
 
 `/re` answers the last message that **arrived** from the current partner, and
 sends the old text along as `> ` lines so that a client which does not know
@@ -500,9 +521,14 @@ real addresses to moderators only. The console looks the nickname up and says
 which of the two it is: a missing name, or a missing permission. They are
 different problems and only one of them is yours.
 
-Not here: configuring a room, destroying one, and a password for a protected
-room — an invitation that carries one says so instead of failing silently.
-`/join` says which of those a refusal was about.
+Destroying a room **is** here: `/destroyroom` takes it down for everybody and
+for good. The address it takes is where the occupants are sent instead, and it
+is the only part of a destruction that is of any use to them.
+
+Not here: the configuration form as a whole — `/roomencrypt` sets the one field
+that OMEMO in a room needs and nothing offers the rest — and a password for a
+protected room, which `/join` reports rather than sends. `/join` says which of
+those a refusal was about.
 
 Two limits worth knowing. There is no `/re` for a particular older message:
 only the last one that arrived can be answered, because that is all a console
@@ -510,6 +536,31 @@ that keeps no history can point at. And a reply is not offered for encrypted
 messages — the `<reply/>` would travel outside the encryption and say who
 answered whom and when, which is the shape of a conversation in clear to anyone
 watching the connection.
+
+### A voice, a name, and a word to one person
+
+`/askvoice` asks a moderated room to be allowed to speak (section 8.6). Nobody
+answers it as such: the request goes to the moderators as a form, and what comes
+back is a role or nothing at all. On the other side `/grantvoice <nick>` and
+`/denyvoice <nick>` answer one that arrived here — the console keeps the request,
+because the form has to go back with the fields it came with, and by the time
+somebody has read the line the stanza is gone.
+
+`/holdnick [name]` claims a nickname in this room so that nobody else may enter
+under it (section 7.10, which is XEP-0077 pointed at a room). Bare, it says what
+is held. **A name held is not a name taken**: it keeps somebody else from using
+it, it does not put you in the room.
+
+`/affiliations [members|admins|owners|banned]` shows who is on one of the room's
+lists. An affiliation outlives a visit and a role does not, which is the same
+distinction `/kick` and `/ban` run into from the other side — the list is the
+room's memory of people who are not in it.
+
+`/pm <nick> <text>` says something to one occupant and to nobody else (section
+7.5). It goes through the room, so a nickname is all that is needed and, in a
+semi-anonymous room, all there usually is. It is shown differently from a room
+line on purpose: of the two possible mistakes, a private word read as a public
+one is the expensive one.
 
 ### Contacts (roster)
 
