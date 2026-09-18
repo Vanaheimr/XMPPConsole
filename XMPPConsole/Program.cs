@@ -85,6 +85,19 @@ class Program
     /// at the moment somebody asks.
     /// </remarks>
     private static readonly Dictionary<String, MucVoiceRequest> _voiceRequests = [];
+
+    /// <summary>
+    /// XEP-0424: the last line this console said in each conversation, by the
+    /// name it can be taken back under.
+    /// </summary>
+    /// <remarks>
+    /// <b>Not the id that was sent.</b> In a room the name is the one the room
+    /// gave, which arrives only when the room hands our own line back to us -
+    /// so the entry for a room is written by the reflection and not by the
+    /// send. Outside a room there is no reflection and the sent id is the
+    /// name, so that entry is written where the sending happens.
+    /// </remarks>
+    private static readonly Dictionary<String, (String Id, MessageType Type)> _lastOwn = [];
     private static readonly Lock _voiceLock = new ();
 
     /// <summary>
@@ -799,7 +812,12 @@ class Program
                 }
                 else
                 {
-                    await client.SendMessageAsync(JID.Parse(msgParts[0]), msgParts[1]);
+                    var sentId = await client.SendMessageAsync(JID.Parse(msgParts[0]), msgParts[1]);
+
+                    // XEP-0424: outside a room the sent id is the name it can
+                    // be taken back under, and nothing else will arrive to
+                    // say so.
+                    _lastOwn[JID.Parse(msgParts[0]).Bare.ToString()] = (sentId, MessageType.Chat);
                     Console.WriteLine($"  → Sent to {GetShortJid(JID.Parse(msgParts[0]))}");
                     LogMessage(JID.BareTextOf(msgParts[0]),
                                DateTime.Now,
@@ -889,6 +907,10 @@ class Program
 
             case "/pm":
                 await ProcessRoomPrivateCommandAsync(args);
+                break;
+
+            case "/unsay" or "/retract":
+                await ProcessRetractCommandAsync();
                 break;
 
             case "/grantvoice":
@@ -1688,6 +1710,46 @@ class Program
     /// By nickname, because that is what one has: a semi-anonymous room gives
     /// out no real addresses, and the room is what routes this.
     /// </remarks>
+    /// <summary>
+    /// XEP-0424: takes back the last thing this console said here.
+    /// </summary>
+    /// <remarks>
+    /// <b>It is a request and never a deletion</b>, and the line says so.
+    /// What the far side does with it is theirs to decide: a client may hide
+    /// the line, mark it, or ignore the extension entirely and show the
+    /// fallback sentence. Whoever needs something unsaid needs not to have
+    /// said it.
+    /// </remarks>
+    private static async Task ProcessRetractCommandAsync()
+    {
+
+        if (_client?.CurrentChatPartner is not JID where)
+        {
+            Console.WriteLine("No conversation. Use /to <jid> or /join <room>.");
+            return;
+        }
+
+        if (!_lastOwn.TryGetValue(where.Bare.ToString(), out var last))
+        {
+            Console.WriteLine("  Nothing has gone out here in this session.");
+            return;
+        }
+
+        await _client.RetractMessageAsync(where.Bare, last.Id, last.Type);
+
+        _lastOwn.Remove(where.Bare.ToString());
+
+        Console.ForegroundColor = ConsoleColor.DarkYellow;
+        Console.WriteLine($"  \u21B6 Taken back ({last.Id})");
+        Console.ResetColor();
+
+        Console.ForegroundColor = ConsoleColor.DarkGray;
+        Console.WriteLine("  A request and not a deletion: what the other side does with it " +
+                          "is theirs to decide, and the archive keeps its own copy.");
+        Console.ResetColor();
+
+    }
+
     private static async Task ProcessRoomPrivateCommandAsync(String args)
     {
 
@@ -3326,7 +3388,41 @@ class Program
     private static void HandleMessage(XMPPMessage message)
     {
 
+        // XEP-0424: our own line coming back out of a room carries the name
+        // the room gave it, which is the only name a retraction may use
+        // there. Recorded before anything is drawn, because it is about what
+        // can be done with the line and not about showing it.
+        if (message.Type == MessageType.GroupChat &&
+            _client?.Room(message.From.Bare) is MucRoom itsRoom &&
+            message.From.Resourcepart == itsRoom.Nick &&
+            message.RetractableId is String name)
+        {
+            _lastOwn[message.From.Bare.ToString()] = (name, MessageType.GroupChat);
+        }
+
         using var scope = Output();
+
+        // XEP-0424: somebody took something back. Written out as what it is
+        // rather than as the fallback sentence it carries - that sentence is
+        // for clients which cannot do this, and showing it here would be this
+        // console pretending not to understand its own extension.
+        if (message.IsRetraction)
+        {
+
+            Console.ForegroundColor = ConsoleColor.DarkYellow;
+            Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] " +
+                              $"{GetShortJid(JID.Parse(message.From.ToString()))} took back what " +
+                              $"they said (\u21B6 {message.RetractsId})");
+            Console.ResetColor();
+
+            Console.ForegroundColor = ConsoleColor.DarkGray;
+            Console.WriteLine("  A console cannot unwrite a line. What stands above it stands, " +
+                              "and this is the honest way to say so.");
+            Console.ResetColor();
+
+            return;
+
+        }
 
         Console.ForegroundColor = ConsoleColor.Cyan;
 
@@ -3979,6 +4075,9 @@ Messages:
   /roomencrypt       make this room one that can be written in encrypted
                      (XEP-0384 in a room needs real addresses, so this makes
                       the room non-anonymous - for everybody in it)
+  /unsay             take back the last thing said here (XEP-0424) - a request
+                     and not a deletion: the far side decides what to do with
+                     it, and the archive keeps its own copy
   /pm <nick> <text>  say something to one occupant and to nobody else in the
                      room (XEP-0045, 7.5) - it goes through the room, so a
                      nickname is all that is needed and all that is usually had
