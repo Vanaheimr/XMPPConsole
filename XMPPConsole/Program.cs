@@ -812,6 +812,11 @@ class Program
             // XEP-0308: corrects the last message to the current conversation
             // partner. What stands here is the complete new text and not the
             // change to it.
+            //
+            // Works in a room since D135, and that is where it matters most:
+            // /join makes the room the current conversation, so this needs no
+            // case of its own - what it needed was for a room message to be
+            // written down as correctable at all.
             case "/fix" or "/corr":
                 if (args.Length == 0)
                 {
@@ -821,11 +826,15 @@ class Program
                 {
                     Console.WriteLine(client.CurrentChatPartner is null
                                           ? "No recipient set. Use /to <jid>"
-                                          : "Nothing has gone out to this recipient yet.");
+                                          : CurrentRoom is not null
+                                                ? "Nothing has been said in this room yet."
+                                                : "Nothing has gone out to this recipient yet.");
                 }
                 else
                 {
-                    Console.WriteLine($"  ✎ Corrected to {GetShortJid(client.CurrentChatPartner!.Value)}");
+                    Console.WriteLine(CurrentRoom is not null
+                                          ? $"  ✎ Corrected in {GetShortJid(client.CurrentChatPartner!.Value)} - everybody present sees it"
+                                          : $"  ✎ Corrected to {GetShortJid(client.CurrentChatPartner!.Value)}");
                 }
                 break;
 
