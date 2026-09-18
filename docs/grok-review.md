@@ -13,6 +13,37 @@ This is a code review, not a live penetration test. Findings come from reading t
 > disagreed with it, which are answered in the working notes rather than
 > silently edited in here.
 
+## Where this stands — 2026-09-18 (D139)
+
+Ten findings. **Seven are closed outright:** 1, 2, 3, 4, 5, 6 and 9. The other
+three carry marks on the parts that are closed and reasons on the parts that
+are not:
+
+| | |
+|---|---|
+| 7 | four of five closed. `TrustNewDevicesBlindly = true` stays, and the report itself calls it a deliberate trade-off |
+| 8 | the channel-binding sentence was overtaken by the code and is struck; PLAIN as a last resort is by design. **The password kept as a `string` for the life of the process is the one item in this document with neither a fix nor a reason** |
+| 10 | four of seven closed. PLAIN by default and its timing are marked *left as it is*, with the reason; `Ed25519Math` is scoped by the report itself as acceptable for a client |
+
+Of the eleven **Low / design** rows two are closed and the rest are trade-offs
+named where they are made.
+
+### Why this file is kept rather than deleted
+
+Because two of its own sentences turned out to be wrong, and finding that out
+was not cheap.
+
+Finding 2's attack does not work on .NET, which refuses a secure-to-insecure
+redirect itself — and the second fix it proposes would break the specification
+it means to protect. Finding 8 said there was no channel binding; there is, and
+that sentence had already been copied into another repository's README, where it
+claimed the mechanism was absent altogether.
+
+Establishing either took reading XEP-0156 and the .NET source. **That work is
+written beside the findings now**, and it is not work anybody repeats from a
+deleted file. The same goes for the three trade-offs above: this is the only
+place their reasons stand in one piece.
+
 ---
 
 ## Overall assessment

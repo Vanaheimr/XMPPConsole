@@ -791,6 +791,15 @@ nothing marks it as having been encrypted at all.
 - `XMPPConsole/Properties/launchSettings.json` is a local debugging profile. If
   you put real credentials in it, keep it out of the repository.
 
+**Where the reasoning lives.** A code review of this console and of Ratatoskr
+was made in August 2026 and is kept in
+[docs/grok-review.md](docs/grok-review.md), annotated since with what has been
+closed and what deliberately has not. Ten findings, seven closed outright; the
+rest carry their reasons, and the trade-offs listed above are written out there
+in one piece rather than one line each. Two of the review's own sentences turned
+out to be wrong, and the answers stand beside them — which is the whole argument
+for keeping a review after its list has gone quiet.
+
 ## Architecture
 
 Three layers, cleanly separated:
