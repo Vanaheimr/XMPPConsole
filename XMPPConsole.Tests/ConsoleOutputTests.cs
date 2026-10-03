@@ -58,7 +58,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPConsole.Tests
 
         #endregion
 
-        #region SetUp
+        #region SetUp / TearDown
 
         [SetUp]
         public void Prepare()
@@ -66,6 +66,10 @@ namespace org.GraphDefined.Vanaheimr.XMPPConsole.Tests
             _written  = new StringWriter();
             _output   = new ConsoleOutput(() => Prompt, _written, () => 20);
         }
+
+        [TearDown]
+        public void CleanUp()
+            => _written.Dispose();
 
         #endregion
 
