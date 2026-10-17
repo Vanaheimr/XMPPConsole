@@ -17,6 +17,8 @@
 
 #region Usings
 
+using System.Runtime.CompilerServices;
+
 using Microsoft.Extensions.Logging;
 
 using org.GraphDefined.Vanaheimr.Illias;
@@ -74,6 +76,19 @@ class Program
     /// price, and a console that is running for a week has a few dozen of them.
     /// </remarks>
     private static readonly Dictionary<String, XMPPMessage> _lastFrom = [];
+
+    /// <summary>
+    /// XEP-0384: the messages that arrived encrypted - so that an answer to one
+    /// of them does not carry it back out in the clear as its quotation.
+    /// </summary>
+    /// <remarks>
+    /// <b>By the instance and not by what it says.</b> The client hands one and
+    /// the same message to OnEncryptedMessage first and to OnMessage after it,
+    /// and the second is what files it under <see cref="_lastFrom"/>. Weak,
+    /// because nothing here needs to keep a message alive for the sake of a
+    /// mark on it.
+    /// </remarks>
+    private static readonly ConditionalWeakTable<XMPPMessage, OmemoDecrypted> _arrivedEncrypted = new ();
 
     /// <summary>
     /// XEP-0045, section 8.6: voice requests that have arrived and not been
@@ -285,6 +300,11 @@ class Program
         // one place, where it can be seen - instead of turning ten display
         // routines into something they are not.
         client.OnMessage                   += (timestamp, sender, message,     ct) => { HandleMessage    (message);     return Task.CompletedTask; };
+
+        // XEP-0384: which of those arrived encrypted. Raised before OnMessage
+        // and with the same message, so the mark is there by the time
+        // HandleMessage files it for /re.
+        client.OnEncryptedMessage          += (timestamp, sender, message, omemo, ct) => { _arrivedEncrypted.AddOrUpdate(message, omemo); return Task.CompletedTask; };
 
         // XEP-0045: what happens in a room. Dimmed, because none of it is
         // somebody saying something - and left out entirely would make a room
@@ -859,7 +879,7 @@ class Program
             // XEP-0461: answers the last message from the current conversation
             // partner. The quoted lines travel along in the body, so that a
             // client which does not know the extension still shows what this is
-            // about.
+            // about - encrypted, when what is answered arrived encrypted.
             case "/re" or "/reply":
                 await ProcessReplyCommandAsync(args);
                 break;
@@ -1125,6 +1145,11 @@ class Program
     /// never remembered here. That is a limit of the protocol and not of this
     /// console, and saying so is more use than an answer that points somewhere
     /// different for every reader.
+    ///
+    /// <b>Encrypted as the conversation is.</b> The reference and the marking
+    /// of the quotation go inside the envelope then, where only the reader sees
+    /// who answered whom. A line that arrived encrypted is never answered in
+    /// the clear, because the answer would quote it.
     /// </remarks>
     private static async Task ProcessReplyCommandAsync(String args)
     {
@@ -1157,17 +1182,103 @@ class Program
             return;
         }
 
-        if (await client.ReplyToAsync(answered, args) is null)
+        if (answered.ReplyableId is not String replyToId)
         {
             Console.WriteLine("That message carries no name that could be answered.");
             return;
         }
 
+        // XEP-0384 with XEP-0461: an answer carries the answered line along as
+        // its quotation, so a line that arrived encrypted is answered encrypted
+        // or not at all. Since Ratatoskr 4b926ff there is an encrypted answer
+        // to send - and a decrypted line in a room now comes with the name the
+        // room gave it, so it can be answered at all. Before, it could not;
+        // afterwards, on the plain path, its text would have gone back into
+        // the room in the clear.
+        var encrypted   = _arrivedEncrypted.TryGetValue(answered, out _);
+        var sealedUp    = false;
+        var inTheClear  = (String?) null;
+
+        // In a room by the rule an ordinary line follows there: encrypted when
+        // the room can carry it, in the clear when it cannot - and then only
+        // if what is quoted was in the clear already.
+        if (answered.Type == MessageType.GroupChat)
+        {
+
+            var room = answered.From.Bare;
+            var why  = client.OmemoEnabled
+                           ? client.CannotEncryptInRoom(room)
+                           : "this client has no OMEMO";
+
+            if (why is null)
+            {
+
+                var sent = await client.SendEncryptedRoomReplyAsync(room,
+                                                                    args,
+                                                                    replyToId,
+                                                                    replyToAuthor:  answered.From,
+                                                                    quotedText:     answered.Text,
+                                                                    quotedAuthor:   answered.From.Resourcepart);
+
+                if (sent.Refusal is not null)
+                {
+                    Console.WriteLine($"  Not sent: {sent.Refusal}");
+                    return;
+                }
+
+                sealedUp = true;
+
+            }
+
+            else if (encrypted)
+            {
+                Console.WriteLine($"  Not sent: that line arrived encrypted and the answer quotes it - " +
+                                  $"here it would go out in the clear ({why}).");
+                return;
+            }
+
+            else
+            {
+                await client.ReplyToAsync(answered, args);
+                inTheClear = why;
+            }
+
+        }
+
+        // One to one by the rule a line there follows: in the clear unless
+        // asked otherwise - and a line that arrived encrypted asks otherwise.
+        else if (encrypted)
+        {
+
+            var sent = await client.SendEncryptedReplyAsync(answered.From,
+                                                            args,
+                                                            replyToId,
+                                                            replyToAuthor:  answered.From,
+                                                            quotedText:     answered.Text);
+
+            // Reported the way /omemo on reports a send, and for its reason:
+            // an answer nobody can open is not to be passed off as an answer.
+            if (!sent.Readable)
+                Console.WriteLine("[!] encrypted, but NO device of theirs can read it.");
+
+            foreach (var u in sent.Skipped)
+                Console.WriteLine($"    ✗ {u.Jid}/{u.DeviceId}: {u.Reason}");
+
+            sealedUp = true;
+
+        }
+
+        else
+            await client.ReplyToAsync(answered, args);
+
         Console.ForegroundColor = ConsoleColor.DarkGray;
         Console.WriteLine($"  ↩ {Shorten(answered.Text)}");
         Console.ResetColor();
 
-        Console.WriteLine($"  Answered to {GetShortJid(client.CurrentChatPartner.Value)}");
+        Console.WriteLine($"  Answered to {GetShortJid(client.CurrentChatPartner.Value)}" +
+                          (sealedUp               ? "  🔒"
+                         : inTheClear is not null ? $"  (in the clear: {inTheClear})"
+                         :                          ""));
 
     }
 

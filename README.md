@@ -532,10 +532,13 @@ those a refusal was about.
 
 Two limits worth knowing. There is no `/re` for a particular older message:
 only the last one that arrived can be answered, because that is all a console
-that keeps no history can point at. And a reply is not offered for encrypted
-messages — the `<reply/>` would travel outside the encryption and say who
-answered whom and when, which is the shape of a conversation in clear to anyone
-watching the connection.
+that keeps no history can point at. And an answer to an encrypted message is
+encrypted, with the `<reply/>` and the quotation's marking **inside** the
+envelope: beside it they would say who answered whom and when, which is the
+shape of a conversation in clear to anyone watching the connection. In a room
+an answer follows the rule an ordinary line follows — encrypted when the room
+can carry it — except that a line which arrived encrypted is never answered in
+the clear, because the answer quotes it; `/re` says so and sends nothing.
 
 ### A voice, a name, and a word to one person
 
