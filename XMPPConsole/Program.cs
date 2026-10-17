@@ -875,7 +875,7 @@ class Program
                 {
                     Console.WriteLine("Syntax: /fix <correct text>");
                 }
-                else if (await client.CorrectLastMessageAsync(args) is null)
+                else if (await client.CorrectLastAsync(args) is not CorrectionSent correction)
                 {
                     Console.WriteLine(client.CurrentChatPartner is null
                                           ? "No recipient set. Use /to <jid>"
@@ -883,11 +883,29 @@ class Program
                                                 ? "Nothing has been said in this room yet."
                                                 : "Nothing has gone out to this recipient yet.");
                 }
+
+                // XEP-0384: a correction goes out the way the line it corrects
+                // did, because it carries the whole new text. When that cannot
+                // be encrypted any more, nothing goes - and the line says why.
+                else if (correction.Refusal is not null)
+                {
+                    Console.WriteLine($"  Not sent: {correction.Refusal}");
+                }
+
                 else
                 {
-                    Console.WriteLine(CurrentRoom is not null
-                                          ? $"  ✎ Corrected in {GetShortJid(client.CurrentChatPartner!.Value)} - everybody present sees it"
-                                          : $"  ✎ Corrected to {GetShortJid(client.CurrentChatPartner!.Value)}");
+
+                    Console.WriteLine((CurrentRoom is not null
+                                           ? $"  ✎ Corrected in {GetShortJid(client.CurrentChatPartner!.Value)} - everybody present sees it"
+                                           : $"  ✎ Corrected to {GetShortJid(client.CurrentChatPartner!.Value)}") +
+                                      (correction.Encrypted ? "  🔒" : ""));
+
+                    if (!correction.Readable)
+                        Console.WriteLine("[!] encrypted, but NO device of theirs can read it.");
+
+                    foreach (var u in correction.Skipped)
+                        Console.WriteLine($"    ✗ {u.Jid}/{u.DeviceId}: {u.Reason}");
+
                 }
                 break;
 

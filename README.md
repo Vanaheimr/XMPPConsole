@@ -410,8 +410,12 @@ current conversation partner. Everything else is a command.
 ```
 
 `/fix` takes the **complete new text**, not the change to it. It corrects the
-last message to the current partner and becomes the last one itself, so a
-correction can be corrected.
+last message to the current partner, and a correction can be corrected again —
+every one of them naming the original, as XEP-0308 asks since 1.1.0. Because
+it carries the whole new text, it goes out **the way the corrected message
+did**: encrypted after an encrypted line, with the `<replace/>` inside the
+envelope. Where that is no longer possible it sends nothing and says why,
+rather than write the new text in the clear.
 
 `/unsay` takes back the last thing said in this conversation (XEP-0424). It is
 **a request and not a deletion**: what the far side does with it is theirs, the
