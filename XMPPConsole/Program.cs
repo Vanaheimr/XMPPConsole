@@ -725,7 +725,22 @@ class Program
 
             if (input.StartsWith('/'))
             {
-                await ProcessCommandAsync(input, ct);
+
+                // RFC 7622 where a person types: an address that is not one is
+                // a mistake to point out, not a reason to end the session.
+                // Until now it went up to Main's last catch, which disposes the
+                // client - one typo in /msg, and the connection was gone.
+                try
+                {
+                    await ProcessCommandAsync(input, ct);
+                }
+                catch (JidFormatException e)
+                {
+                    Console.WriteLine(String.IsNullOrEmpty(e.Jid)
+                                          ? $"[!] Not an address: {e.Message}"
+                                          : $"[!] '{e.Jid}' is not an address: {e.Message}");
+                }
+
             }
             else
             {
