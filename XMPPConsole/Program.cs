@@ -3908,33 +3908,68 @@ class Program
         using var scope = Output();
         Console.ForegroundColor = ConsoleColor.Magenta;
 
+        var colour = carbon.IsSent
+                         ? ConsoleColor.DarkMagenta
+                         : ConsoleColor.Magenta;
+
         if (carbon.IsSent)
         {
             // Sent by me on another device
             Console.Write($"[{timestamp}] ");
-            Console.ForegroundColor = ConsoleColor.DarkMagenta;
-            Console.Write($"📤 Me → {GetShortJid(carbon.OriginalTo)}: ");
+            Console.ForegroundColor = colour;
+            Console.Write($"📤 Me → {GetShortJid(carbon.OriginalTo)}");
         }
         else
         {
             // Received on another device
             Console.Write($"[{timestamp}] ");
-            Console.ForegroundColor = ConsoleColor.Magenta;
-            Console.Write($"📥 {GetShortJid(carbon.OriginalFrom)} (Carbon): ");
+            Console.ForegroundColor = colour;
+            Console.Write($"📥 {GetShortJid(carbon.OriginalFrom)} (Carbon)");
         }
 
+        // XEP-0461: an answer written on another device is still an answer,
+        // and since Ratatoskr 4b926ff a carbon says so.
+        if (carbon.RepliesTo is not null)
+        {
+            Console.ForegroundColor = ConsoleColor.DarkYellow;
+            Console.Write(" ↩");
+            Console.ForegroundColor = colour;
+        }
+
+        Console.Write(": ");
         Console.ResetColor();
-        Console.WriteLine(carbon.Body ?? "(no content)");
+
+        // XEP-0428: the quoted lines dimmed above what was actually written,
+        // as for a message that arrived here - instead of in the middle of the
+        // line, in the colour of the words somebody wrote just now.
+        if (carbon.Quote is String quoted)
+        {
+
+            Console.WriteLine();
+            Console.ForegroundColor = ConsoleColor.DarkGray;
+
+            foreach (var line in quoted.TrimEnd('\n').Split('\n'))
+                Console.WriteLine($"           {line}");
+
+            Console.ResetColor();
+            Console.Write("           ");
+
+        }
+
+        Console.WriteLine(carbon.Text ?? "(no content)");
 
         // A carbon is the same conversation seen from another device, so it
         // belongs in the same file - under the far end, whichever direction it
-        // went.
+        // went. What was written, as for any other message, and what it
+        // answers beside it.
         LogMessage((carbon.IsSent ? carbon.OriginalTo : carbon.OriginalFrom).Bare.ToString(),
                    carbon.ReceivedAt,
                    carbon.IsSent ? ChatLogKind.Outgoing : ChatLogKind.Incoming,
                    carbon.IsSent ? "me" : GetShortJid(JID.Parse(carbon.OriginalFrom.ToString())),
-                   carbon.Body,
-                   "carbon");
+                   carbon.Text,
+                   carbon.RepliesTo is null
+                       ? "carbon"
+                       : $"carbon, answers {carbon.RepliesTo.Id}");
 
     }
 
