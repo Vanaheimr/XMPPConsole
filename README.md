@@ -422,7 +422,13 @@ rather than write the new text in the clear.
 archive keeps its own copy, and whoever was reading has already read. In a room
 what it takes back is the line under the name the *room* gave it — and that name
 arrives only when the room hands our own line back, so the console notes it from
-the reflection and not from the send.
+the reflection and not from the send. An **encrypted** line comes back
+unreadable, and only its name is taken from it.
+
+A line that went out encrypted is taken back encrypted, the `<retract/>` inside
+the envelope: in the clear the request would name the line and tell everybody
+watching that you wanted it gone. When a room can no longer carry that, `/unsay`
+says why and sends nothing.
 
 `/re` answers the last message that **arrived** from the current partner, and
 sends the old text along as `> ` lines so that a client which does not know

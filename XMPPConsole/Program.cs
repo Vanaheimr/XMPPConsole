@@ -111,8 +111,17 @@ class Program
     /// so the entry for a room is written by the reflection and not by the
     /// send. Outside a room there is no reflection and the sent id is the
     /// name, so that entry is written where the sending happens.
+    ///
+    /// <b>An encrypted line in a room comes back unreadable</b>, and the
+    /// library drops it - so its entry is written from OnOwnRoomLineNamed,
+    /// which carries the room's name for it. Without that the entry went on
+    /// naming the plain line said before, and /unsay took back that one.
+    ///
+    /// <b>Encrypted</b> says how it went out, and so how it is taken back: a
+    /// plain retraction names the line beside the encryption, and tells
+    /// everybody watching that its author wanted it gone.
     /// </remarks>
-    private static readonly Dictionary<String, (String Id, MessageType Type)> _lastOwn = [];
+    private static readonly Dictionary<String, (String Id, MessageType Type, Boolean Encrypted)> _lastOwn = [];
     private static readonly Lock _voiceLock = new ();
 
     /// <summary>
@@ -305,6 +314,11 @@ class Program
         // and with the same message, so the mark is there by the time
         // HandleMessage files it for /re.
         client.OnEncryptedMessage          += (timestamp, sender, message, omemo, ct) => { _arrivedEncrypted.AddOrUpdate(message, omemo); return Task.CompletedTask; };
+
+        // XEP-0424 with XEP-0384: our own encrypted line came back out of a
+        // room. Unreadable, so it never reaches HandleMessage - but the name
+        // the room gave it does, and it is the one /unsay has to use.
+        client.OnOwnRoomLineNamed          += (timestamp, sender, from, sentAs, named, ct) => { _lastOwn[from.Bare.ToString()] = (named, MessageType.GroupChat, true); return Task.CompletedTask; };
 
         // XEP-0045: what happens in a room. Dimmed, because none of it is
         // somebody saying something - and left out entirely would make a room
@@ -790,7 +804,22 @@ class Program
                 }
 
                 else
+                {
+
                     messageId = await _client.SendMessageAsync(input);
+
+                    // XEP-0424: one to one the sent id is the name it can be
+                    // taken back under. Not noted until now, so /unsay found
+                    // only what /msg had said - or nothing. Not for a private
+                    // word to room/nick, whose bare address is the room.
+                    if (messageId is not null &&
+                        _client.CurrentChatPartner is JID to &&
+                        _client.Room(to.Bare) is null)
+                    {
+                        _lastOwn[to.Bare.ToString()] = (messageId, MessageType.Chat, false);
+                    }
+
+                }
 
                 if (messageId == null)
                 {
@@ -852,7 +881,7 @@ class Program
                     // XEP-0424: outside a room the sent id is the name it can
                     // be taken back under, and nothing else will arrive to
                     // say so.
-                    _lastOwn[JID.Parse(msgParts[0]).Bare.ToString()] = (sentId, MessageType.Chat);
+                    _lastOwn[JID.Parse(msgParts[0]).Bare.ToString()] = (sentId, MessageType.Chat, false);
                     Console.WriteLine($"  → Sent to {GetShortJid(JID.Parse(msgParts[0]))}");
                     LogMessage(JID.BareTextOf(msgParts[0]),
                                DateTime.Now,
@@ -1299,10 +1328,12 @@ class Program
 
             sealedUp = true;
 
+            NoteOwnLine(answered, sent.MessageId, Encrypted: true);
+
         }
 
         else
-            await client.ReplyToAsync(answered, args);
+            NoteOwnLine(answered, await client.ReplyToAsync(answered, args), Encrypted: false);
 
         Console.ForegroundColor = ConsoleColor.DarkGray;
         Console.WriteLine($"  ↩ {Shorten(answered.Text)}");
@@ -1312,6 +1343,25 @@ class Program
                           (sealedUp               ? "  🔒"
                          : inTheClear is not null ? $"  (in the clear: {inTheClear})"
                          :                          ""));
+
+    }
+
+    /// <summary>
+    /// XEP-0424: an answer sent one to one is the last line said there, and
+    /// /unsay takes it back by the id it went out under.
+    /// </summary>
+    /// <remarks>
+    /// <b>Not a private word in a room.</b> Its bare address is the room's, so
+    /// noting it there would have /unsay in the room send its retraction to
+    /// everybody - naming a line only one of them ever saw.
+    /// </remarks>
+    private static void NoteOwnLine(XMPPMessage answered, String? sentId, Boolean Encrypted)
+    {
+
+        if (sentId is null || answered.IsRoomPrivate)
+            return;
+
+        _lastOwn[answered.From.Bare.ToString()] = (sentId, MessageType.Chat, Encrypted);
 
     }
 
@@ -1879,12 +1929,41 @@ class Program
             return;
         }
 
-        await _client.RetractMessageAsync(where.Bare, last.Id, last.Type);
+        // XEP-0384: taken back the way it was said. In the clear, a
+        // retraction of an encrypted line names it beside the encryption, and
+        // tells everybody watching that its author wanted it gone.
+        if (!last.Encrypted)
+            await _client.RetractMessageAsync(where.Bare, last.Id, last.Type);
+
+        else if (last.Type == MessageType.GroupChat)
+        {
+
+            var sent = await _client.SendEncryptedRoomRetractionAsync(where.Bare, last.Id);
+
+            // Somebody joined whom the room does not name, or the room stopped
+            // naming everybody. Nothing goes - not the same request in the clear.
+            if (sent.Refusal is not null)
+            {
+                Console.WriteLine($"  Not sent: {sent.Refusal}");
+                return;
+            }
+
+        }
+
+        else
+        {
+
+            var sent = await _client.SendEncryptedRetractionAsync(where.Bare, last.Id);
+
+            if (!sent.Readable)
+                Console.WriteLine("[!] encrypted, but NO device of theirs can read it.");
+
+        }
 
         _lastOwn.Remove(where.Bare.ToString());
 
         Console.ForegroundColor = ConsoleColor.DarkYellow;
-        Console.WriteLine($"  \u21B6 Taken back ({last.Id})");
+        Console.WriteLine($"  \u21B6 Taken back ({last.Id})" + (last.Encrypted ? "  \uD83D\uDD12" : ""));
         Console.ResetColor();
 
         Console.ForegroundColor = ConsoleColor.DarkGray;
@@ -2753,6 +2832,10 @@ class Program
 
                 var sent = await client.SendEncryptedMessageAsync(JID.Parse(parts[1]), parts[2]);
 
+                // XEP-0424: the last line said to them, and encrypted, so that
+                // /unsay takes it back encrypted too.
+                _lastOwn[JID.Parse(parts[1]).Bare.ToString()] = (sent.MessageId, MessageType.Chat, true);
+
                 // Readable is kept apart from an empty Skipped on purpose, and
                 // the line above used to collapse the two. One device of four
                 // missing is a message that arrived; none of three is a message
@@ -3541,7 +3624,7 @@ class Program
             message.From.Resourcepart == itsRoom.Nick &&
             message.RetractableId is String name)
         {
-            _lastOwn[message.From.Bare.ToString()] = (name, MessageType.GroupChat);
+            _lastOwn[message.From.Bare.ToString()] = (name, MessageType.GroupChat, false);
         }
 
         using var scope = Output();
