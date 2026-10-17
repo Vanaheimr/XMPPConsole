@@ -798,7 +798,7 @@ class Program
                 break;
 
             case "/to" or "/chat":
-                await client.SetChatPartnerAsync(JID.Parse(string.IsNullOrEmpty(args) ? null : args));
+                await client.SetChatPartnerAsync(string.IsNullOrEmpty(args) ? null : JID.Parse(args));
                 Console.WriteLine(client.CurrentChatPartner == null
                                       ? "Chat recipient reset"
                                       : $"Chatting with: {client.CurrentChatPartner}");
@@ -2441,7 +2441,7 @@ class Program
         var targetDisplay = target ?? "Server";
 
         Console.WriteLine($"[*] Ping to {targetDisplay}...");
-        var rtt = await _client!.PingAsync(JID.Parse(target), ct);
+        var rtt = await _client!.PingAsync(target is null ? null : JID.Parse(target), ct);
 
         Console.WriteLine(rtt.HasValue
                               ? $"[+] Pong from {targetDisplay}: {rtt.Value.TotalMilliseconds:F1}ms"
@@ -2887,7 +2887,7 @@ class Program
             // A target can be given, because a PEP node belongs to an account
             // and not to the PubSub component of the domain.
             case "sub" or "subscribe":
-                var sub = await _client!.PubSubSubscribeAsync(nodeId, JID.Parse(parts.Length > 2 ? parts[2] : null));
+                var sub = await _client!.PubSubSubscribeAsync(nodeId, parts.Length > 2 ? JID.Parse(parts[2]) : null);
                 Console.WriteLine(sub is not null
                                       ? $"📢 Subscribed: {nodeId}" +
                                         (sub.SubId is not null ? $" (subid {sub.SubId})" : "")
@@ -2896,7 +2896,7 @@ class Program
 
             case "unsub" or "unsubscribe":
                 Console.WriteLine(await _client!.PubSubUnsubscribeAsync(nodeId,
-                                                                        JID.Parse(parts.Length > 2 ? parts[2] : null),
+                                                                        parts.Length > 2 ? JID.Parse(parts[2]) : null,
                                                                         parts.Length > 3 ? parts[3] : null)
                                       ? $"🔕 Subscription ended: {nodeId}"
                                       : $"⚠️ Subscription not ended: {nodeId} - see the log");
@@ -2931,7 +2931,7 @@ class Program
             // connection break the first is empty and the second the only way
             // back to the ids.
             case "sync":
-                var fetched = await _client!.PubSubGetSubscriptionsAsync(JID.Parse(parts.Length > 1 ? parts[1] : null));
+                var fetched = await _client!.PubSubGetSubscriptionsAsync(parts.Length > 1 ? JID.Parse(parts[1]) : null);
 
                 if (fetched is null)
                     Console.WriteLine("⚠️ Subscriptions not fetched - see the log");
