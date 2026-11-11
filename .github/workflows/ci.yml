@@ -40,7 +40,8 @@ jobs:
     #
     # Measured before this leg was added: 29 of 29 on Debian 13 (trixie) with
     # .NET 10.0.302, nothing skipped — the same 29 the Windows leg has been
-    # reporting.
+    # reporting. The SDK has moved to 11 since; that count is from the run
+    # on 10 and has not been taken again.
     #
     # fail-fast is off on purpose: "red on exactly one platform" is the most
     # valuable signal this matrix produces, so one leg must not cancel the
@@ -112,7 +113,7 @@ jobs:
 
       - uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: '11.0.x'
 
       # The test project is the root of everything: building it builds the
       # console, and under that Ratatoskr, Hermod and Styx.

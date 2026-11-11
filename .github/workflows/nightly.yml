@@ -117,7 +117,7 @@ jobs:
 
       - uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: '11.0.x'
 
       # The test project is the root of everything: building it builds the
       # console, and under that Ratatoskr, Hermod and Styx — at master now.

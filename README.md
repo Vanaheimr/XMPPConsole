@@ -242,7 +242,7 @@ dotnet run --project XMPPConsole -- -j user@example.com -p secret
 The built executable is `XMPPConsole` and takes the same options:
 
 ```bash
-./XMPPConsole/bin/Debug/net10.0/XMPPConsole -j user@example.com -p secret
+./XMPPConsole/bin/Debug/net11.0/XMPPConsole -j user@example.com -p secret
 ```
 
 ## Command line options
