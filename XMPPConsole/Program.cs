@@ -1320,11 +1320,16 @@ class Program
 
             // Reported the way /omemo on reports a send, and for its reason:
             // an answer nobody can open is not to be passed off as an answer.
+            // It did not go out either, so nothing below is true of it - not
+            // the lock, and not the line it would be shown as answering.
             if (!sent.Readable)
-                Console.WriteLine("[!] encrypted, but NO device of theirs can read it.");
+                Console.WriteLine(NotSentEncrypted(sent, answered.From.Bare.ToString()));
 
             foreach (var u in sent.Skipped)
                 Console.WriteLine($"    ✗ {u.Jid}/{u.DeviceId}: {u.Reason}");
+
+            if (!sent.Readable)
+                return;
 
             sealedUp = true;
 
@@ -1955,8 +1960,19 @@ class Program
 
             var sent = await _client.SendEncryptedRetractionAsync(where.Bare, last.Id);
 
+            // The request did not go, so the line is not taken back and stays
+            // the one that can be asked about again.
             if (!sent.Readable)
-                Console.WriteLine("[!] encrypted, but NO device of theirs can read it.");
+            {
+
+                Console.WriteLine(NotSentEncrypted(sent, where.Bare.ToString()));
+
+                foreach (var u in sent.Skipped)
+                    Console.WriteLine($"    ✗ {u.Jid}/{u.DeviceId}: {u.Reason}");
+
+                return;
+
+            }
 
         }
 
@@ -2833,21 +2849,23 @@ class Program
                 var sent = await client.SendEncryptedMessageAsync(JID.Parse(parts[1]), parts[2]);
 
                 // XEP-0424: the last line said to them, and encrypted, so that
-                // /unsay takes it back encrypted too.
-                _lastOwn[JID.Parse(parts[1]).Bare.ToString()] = (sent.MessageId, MessageType.Chat, true);
+                // /unsay takes it back encrypted too. Only a line that went:
+                // what nobody can read is not sent and has no id, and noting
+                // that would put nothing in the place of the last line that
+                // did go out - the one /unsay is then asked about.
+                if (sent.MessageId is not null)
+                    _lastOwn[JID.Parse(parts[1]).Bare.ToString()] = (sent.MessageId, MessageType.Chat, true);
 
-                // Readable is kept apart from an empty Skipped on purpose, and
-                // the line above used to collapse the two. One device of four
-                // missing is a message that arrived; none of three is a message
-                // that went out and nobody can open - which is what writing to
-                // somebody who does not do OMEMO at all looks like. Reporting
-                // the second as a send is the one error this return value
-                // exists to make impossible.
-                if (sent.Readable)
-                    Console.WriteLine($"[→] encrypted to {parts[1]}");
-                else
-                    Console.WriteLine($"[!] encrypted to {parts[1]}, but NO device of theirs " +
-                                      $"can read it.");
+                // Readable is kept apart from an empty Skipped on purpose. One
+                // device of four missing is a message that arrived; none of
+                // three is a message nobody could open, and that one does not
+                // go out at all - which is what writing to somebody who does
+                // not do OMEMO, or only the older one, looks like. It used to
+                // be reported as "encrypted, but no device can read it", from
+                // when the library still put it on the wire.
+                Console.WriteLine(sent.Readable
+                                      ? $"[→] encrypted to {parts[1]}"
+                                      : NotSentEncrypted(sent, parts[1]));
 
                 // Whoever cannot read along is named. A sender who does not
                 // learn of it takes their conversation for held.
@@ -2936,6 +2954,24 @@ class Program
     private static String Grouped(String fingerprint)
         => String.Join(" ", Enumerable.Range(0, fingerprint.Length / 8)
                                       .Select(i => fingerprint.Substring(i * 8, 8)));
+
+    /// <summary>
+    /// What to say about an encrypted line that no device could have read.
+    /// </summary>
+    /// <remarks>
+    /// <b>Not sent, and said so.</b> The library puts nothing on the wire that
+    /// carries no key, so there is no message to describe - only why not, and
+    /// the two reasons lead to different next steps. A contact shown to
+    /// publish no device is written to in the clear or not at all; anything
+    /// else - no answer, a key that changed, a device not trusted - is a
+    /// reason to look before writing in the clear, not after.
+    /// </remarks>
+    private static String NotSentEncrypted(OmemoSent sent, String to)
+
+        => sent.NoOmemoThere
+               ? $"[!] Not sent: {to} publishes no OMEMO device this client can " +
+                  "write to - none at all, or only the older OMEMO."
+               : $"[!] Not sent: no device of {to} could be given a key.";
 
     private static String Symbol(OmemoTrust trust)
         => trust switch {
